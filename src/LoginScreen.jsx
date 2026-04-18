@@ -3,8 +3,10 @@
 
 import { useState } from 'react'
 
-export default function LoginScreen({ authStep, error, onSendLink, email }) {
+export default function LoginScreen({ authStep, error, onSendLink, onSignInPassword, email }) {
   const [inputEmail, setInputEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [mode, setMode] = useState('magic') // 'magic' | 'password'
 
   if (authStep === 'sent') {
     return (
@@ -46,7 +48,6 @@ export default function LoginScreen({ authStep, error, onSendLink, email }) {
           placeholder="כתובת מייל"
           value={inputEmail}
           onChange={e => setInputEmail(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && onSendLink(inputEmail)}
           style={{
             width: '100%', background: '#0e0e20', border: '1px solid #2a2a4a',
             color: '#ddd', padding: '12px 16px', borderRadius: 10,
@@ -55,24 +56,50 @@ export default function LoginScreen({ authStep, error, onSendLink, email }) {
           }}
           autoFocus
         />
+        {mode === 'password' && (
+          <input
+            type="password"
+            placeholder="סיסמה"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && onSignInPassword(inputEmail, password)}
+            style={{
+              width: '100%', background: '#0e0e20', border: '1px solid #2a2a4a',
+              color: '#ddd', padding: '12px 16px', borderRadius: 10,
+              fontSize: 15, fontFamily: 'inherit', marginBottom: 12,
+              outline: 'none', boxSizing: 'border-box', direction: 'ltr',
+            }}
+          />
+        )}
         {error && (
           <div style={{ color: '#e85c4a', fontSize: 13, marginBottom: 10, padding: '8px 12px', background: '#2a0a0a', borderRadius: 8 }}>
             ⚠️ {error}
           </div>
         )}
+        {mode === 'magic' ? (
+          <button
+            onClick={() => onSendLink(inputEmail)}
+            disabled={!inputEmail.includes('@')}
+            style={{ ...btnStyle('#e8c547', '#1a1a2e'), width: '100%', padding: '12px', opacity: !inputEmail.includes('@') ? 0.4 : 1 }}
+          >
+            שלח קישור כניסה →
+          </button>
+        ) : (
+          <button
+            onClick={() => onSignInPassword(inputEmail, password)}
+            disabled={!inputEmail.includes('@') || !password}
+            style={{ ...btnStyle('#e8c547', '#1a1a2e'), width: '100%', padding: '12px', opacity: (!inputEmail.includes('@') || !password) ? 0.4 : 1 }}
+          >
+            כניסה עם סיסמה →
+          </button>
+        )}
         <button
-          onClick={() => onSendLink(inputEmail)}
-          disabled={!inputEmail.includes('@')}
-          style={{
-            ...btnStyle('#e8c547', '#1a1a2e'),
-            width: '100%', padding: '12px',
-            opacity: !inputEmail.includes('@') ? 0.4 : 1,
-          }}
+          onClick={() => setMode(m => m === 'magic' ? 'password' : 'magic')}
+          style={{ ...btnStyle('transparent', '#555'), width: '100%', marginTop: 8, fontSize: 12 }}
         >
-          שלח קישור כניסה →
+          {mode === 'magic' ? 'כניסה עם סיסמה' : 'כניסה עם קישור למייל'}
         </button>
-        <div style={{ color: '#444', fontSize: 11, marginTop: 12, textAlign: 'center', lineHeight: 1.6 }}>
-          אין סיסמה — תקבל קישור ישירות למייל.<br />
+        <div style={{ color: '#444', fontSize: 11, marginTop: 8, textAlign: 'center', lineHeight: 1.6 }}>
           הגישה טעונה אישור של המנהל.
         </div>
       </div>

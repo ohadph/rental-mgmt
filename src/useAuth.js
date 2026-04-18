@@ -103,6 +103,15 @@ export function useAuth() {
   }
 
   // ── Sign out ──────────────────────────────────────────────────────────────
+  const signInWithPassword = async (email, password) => {
+    if(IS_CLAUDE || !SUPABASE_URL){ return false }
+    setError(null)
+    const sb = getSupabase()
+    const { error } = await sb.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
+    if(error){ setError('מייל או סיסמה שגויים.'); return false }
+    return true
+  }
+
   const signOut = async () => {
     await getSupabase().auth.signOut()
     setSession(null)
@@ -117,6 +126,7 @@ export function useAuth() {
     authStep,
     error,
     sendMagicLink,
+    signInWithPassword,
     signOut,
     isLoading: session === undefined,
     isLoggedIn: !!session,

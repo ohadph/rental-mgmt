@@ -2048,7 +2048,7 @@ export default function App(){
         <div style={{fontSize:40}}>🏢</div><div>טוען…</div>
       </div>
     );
-    if(!auth.isLoggedIn) return <LoginScreen authStep={auth.authStep} error={auth.error} onSendLink={auth.sendMagicLink} />;
+    if(!auth.isLoggedIn) return <LoginScreen authStep={auth.authStep} error={auth.error} onSendLink={auth.sendMagicLink} onSignInPassword={auth.signInWithPassword} />;
     if(isPending(auth.userRole)) return <PendingScreen email={auth.email} onSignOut={auth.signOut}/>;
     if(!canView(auth.userRole)) return <PendingScreen email={auth.email} onSignOut={auth.signOut}/>;
   }
