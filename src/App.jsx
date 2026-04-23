@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import * as XLSX from "xlsx";
 import { useSupabaseData } from "./useSupabaseData.js";
 import { useAuth, canEdit, canView, isAdmin, isPending, isUnitViewer } from "./useAuth.js";
@@ -9,12 +9,12 @@ import AdminPanel from "./AdminPanel.jsx";
 
 const DEFAULT_DATA = {
   units: [
-    { id: 1, name: "דירה 1", rent: 4500, persons: 4, vacant: false, waterMeterId:"12345678", electricMeterId:"87654321",
+    { id: 1, name: "דירה 1", rent: 4500, persons: 4, vacant: false, arnonaAmount: 0, waterMeterId:"12345678", electricMeterId:"87654321",
       tenantHistory:[
         {name:"משפחת כהן", phone:"050-1234567", startDate:"2024-01-01", endDate:null}
       ]
     },
-    { id: 2, name: "דירה 2", rent: 3800, persons: 2, vacant: false, waterMeterId:"22334455", electricMeterId:"55443322",
+    { id: 2, name: "דירה 2", rent: 3800, persons: 2, vacant: false, arnonaAmount: 0, waterMeterId:"22334455", electricMeterId:"55443322",
       tenantHistory:[
         {name:"ישראל לוי", phone:"052-9876543", startDate:"2023-06-01", endDate:null}
       ]
@@ -100,7 +100,7 @@ const fmt = (n) =>
 // calcBill: buildingBill drives electricity rate & fixed costs
 // readings.electricity = {prev, curr}  (internal meter)
 // buildingBill = {periods:[{kwh,price},...], fixedCostTotal, fixedSplitMethod}
-const calcBill = (readings, tariffs, unit, units, buildingBill, bills, periodKey) => {
+const calcBill = (readings, tariffs, unit, units, buildingBill, bills, periodKey, noWaterDiscount=false, extraData=null) => {
   let total=0; const lines={};
 
   for(const [key,t] of Object.entries(tariffs)){
@@ -112,10 +112,11 @@ const calcBill = (readings, tariffs, unit, units, buildingBill, bills, periodKey
       const persons  = unit?.persons || 1;
       const allowance= persons * t.perPersonQty;
       const usage    = r.curr - r.prev;
-      const lowUsage = Math.min(usage, allowance);
-      const highUsage= Math.max(0, usage - allowance);
+      // noWaterDiscount: all at high price (tenant didn't provide residency docs)
+      const lowUsage = noWaterDiscount ? 0 : Math.min(usage, allowance);
+      const highUsage= noWaterDiscount ? usage : Math.max(0, usage - allowance);
       const amount   = lowUsage*t.priceLow + highUsage*t.priceHigh;
-      lines[key]={usage,amount,name:t.name,unit:t.unit,tiered:true,allowance,lowUsage,highUsage,perPersonQty:t.perPersonQty,priceLow:t.priceLow,priceHigh:t.priceHigh,persons};
+      lines[key]={usage,amount,name:t.name,unit:t.unit,tiered:true,allowance:noWaterDiscount?0:allowance,lowUsage,highUsage,perPersonQty:t.perPersonQty,priceLow:t.priceLow,priceHigh:t.priceHigh,persons,noWaterDiscount};
       total+=amount;
 
     } else if(key==="electricity"){
@@ -168,6 +169,12 @@ const calcBill = (readings, tariffs, unit, units, buildingBill, bills, periodKey
       lines[key]={usage:unitKwh,amount,name:t.name,unit:t.unit,tiered:false,periods:calcPeriods,fixedShare,usageAmount,multiRate:calcPeriods.length>1};
       total+=amount;
 
+    } else if(key==="sewage" && t.sewageMode==="auto"){
+      if(r.curr==null||r.prev==null) continue;
+      const usage=r.curr-r.prev;
+      const amount = extraData?.sewageAmount ?? +(usage*(t.sewageRatePerCubic||6.9)).toFixed(2);
+      lines[key]={usage,amount,price:t.sewageRatePerCubic||6.9,name:t.name,unit:t.unit,tiered:false,auto:true};
+      total+=amount;
     } else {
       if(r.curr==null||r.prev==null) continue;
       const usage=r.curr-r.prev, amount=usage*t.price;
@@ -178,7 +185,81 @@ const calcBill = (readings, tariffs, unit, units, buildingBill, bills, periodKey
   return {total,lines};
 };
 
+
+// ─── PER-ITEM PAYMENT HELPERS ─────────────────────────────────────────────────
+
+// Default payment item
+const defaultPayItem = () => ({paid:false, amount:null, date:null});
+
+// Get payments object, with defaults for missing items
+const getPayments = (bill, calcLines, unitRent) => {
+  const p = bill.payments || {};
+  const items = {};
+  items.rent = p.rent || defaultPayItem();
+  if(calcLines?.water)       items.water       = p.water       || defaultPayItem();
+  if(calcLines?.electricity) items.electricity = p.electricity || defaultPayItem();
+  if(calcLines?.sewage)      items.sewage      = p.sewage      || defaultPayItem();
+  return items;
+};
+
+// Is the whole bill fully paid?
+const isBillFullyPaid = (bill, calcLines) => {
+  const p = bill.payments || {};
+  const items = ['rent'];
+  if(calcLines?.water)       items.push('water');
+  if(calcLines?.electricity) items.push('electricity');
+  if(calcLines?.sewage)      items.push('sewage');
+  return items.every(k => p[k]?.paid);
+};
+
+const ITEM_LABELS = {
+  rent:        {label:'שכירות',  icon:'🏠', color:'#4caf88'},
+  water:       {label:'מים',     icon:'💧', color:'#6bc5f8'},
+  electricity: {label:'חשמל',   icon:'⚡', color:'#e8c547'},
+  sewage:      {label:'ביוב',    icon:'🚿', color:'#a78bfa'},
+};
+
 const bKey=(uid,month)=>`${uid}_${month}`;
+
+// ─── SEWAGE AUTO-CALC (מטה יהודה מנגנון חורף/קיץ) ───────────────────────────
+// periodKey: "YYYY-MM" (first month of bimonthly period)
+// Winter periods: Dec-Jan, Feb-Mar → 100% × consumption × rate
+// Summer periods: Apr-Nov → 100% × avg of winter periods × rate
+// If no winter history → 100% × current consumption × rate
+
+const calcSewageAuto = (periodKey, unitId, bills, waterUsage, sewageRatePerCubic=6.9) => {
+  const [y, m] = periodKey.split("-").map(Number);
+  const isWinterMonth = (mo) => mo === 12 || mo === 1 || mo === 2 || mo === 3;
+  const isSummer = !isWinterMonth(m) && !isWinterMonth(m+1 > 12 ? 1 : m+1);
+
+  if (!isSummer) {
+    // Winter: 100% of actual consumption
+    return +(waterUsage * sewageRatePerCubic).toFixed(2);
+  }
+
+  // Summer: use average of winter bimonthly periods
+  // Winter season for summer Y: Dec(Y-1)-Jan(Y) and Feb-Mar(Y)
+  const winterPeriod1 = `${y-1}-12`;
+  const winterPeriod2 = `${y}-02`;
+
+  const getWaterUsage = (pk) => {
+    const b = bills[`${unitId}_${pk}`];
+    if (!b?.readings?.water) return null;
+    const { prev, curr } = b.readings.water;
+    if (curr == null || prev == null) return null;
+    return curr - prev;
+  };
+
+  const available = [getWaterUsage(winterPeriod1), getWaterUsage(winterPeriod2)].filter(x => x != null);
+  if (available.length === 0) {
+    // No winter history — use 100% of current consumption
+    return +(waterUsage * sewageRatePerCubic).toFixed(2);
+  }
+  const winterAvg = available.reduce((s, x) => s + x, 0) / available.length;
+  return +(winterAvg * sewageRatePerCubic).toFixed(2);
+};
+
+
 
 // Get the current active tenant for a unit
 const currentTenant = (unit) => {
@@ -426,13 +507,15 @@ function PaymentDemandModal({unit,month,bill,onClose}){
 
   // ── item selection state ──
   const [inclRent, setInclRent] = useState(true);
+  const [inclArnona, setInclArnona] = useState((unit.arnonaAmount||0)>0);
   const [inclLines, setInclLines] = useState(
     ()=>Object.fromEntries(Object.keys(bill.lines).map(k=>[k,true]))
   );
 
   const activeLines = Object.entries(bill.lines).filter(([k])=>inclLines[k]);
   const utilTotal   = activeLines.reduce((s,[,l])=>s+l.amount,0);
-  const grandTotal  = (inclRent?unit.rent:0) + utilTotal;
+  const arnonaAmt  = (inclArnona&&(unit.arnonaAmount||0)>0) ? (unit.arnonaAmount||0) : 0;
+  const grandTotal  = (inclRent?unit.rent:0) + utilTotal + arnonaAmt;
 
   // ── build HTML for print / share ──
   const buildHTML = ()=>`<html dir="rtl"><head><meta charset="utf-8"/><style>
@@ -453,7 +536,8 @@ function PaymentDemandModal({unit,month,bill,onClose}){
     <div class="meta" style="text-align:left"><strong>תאריך הפקה:</strong> ${today}<br/><strong>לתשלום עד:</strong> ${due}</div>
   </div>
   <table><thead><tr><th>פריט</th><th>פירוט</th><th>סכום</th></tr></thead><tbody>
-    ${inclRent?`<tr><td>שכירות חודשית</td><td>${periodLabel(month)}</td><td>${fmt(unit.rent)}</td></tr>`:""}
+    ${inclRent?`<tr><td>שכירות חודשית</td><td>${periodLabel(month)}</td><td>${fmt(unit.rent)}</td></tr>":""}
+    ${arnonaAmt>0?`<tr><td>ארנונה + מיסי מושב</td><td>${periodLabel(month)}</td><td>${fmt(arnonaAmt)}</td></tr>`:""}
     ${activeLines.map(([,l])=>`<tr><td>${l.name}</td><td>${lineDetail(l)}</td><td>${fmt(l.amount)}</td></tr>`).join("")}
   </tbody><tfoot><tr class="tot"><td colspan="2">סה״כ לתשלום</td><td>${fmt(grandTotal)}</td></tr></tfoot></table>
   <div class="stamp">אישור תשלום / חתימה ___________________________ תאריך ___________</div>
@@ -468,6 +552,7 @@ function PaymentDemandModal({unit,month,bill,onClose}){
     lines.push(`לתשלום עד: ${due}`);
     lines.push("──────────────────");
     if(inclRent) lines.push(`🏠 שכירות חודשית: ${fmt(unit.rent)}`);
+    if(arnonaAmt>0) lines.push(`🏛 ארנונה + מיסי מושב: ${fmt(arnonaAmt)}`);
     activeLines.forEach(([,l])=>{
       if(l.tiered){
         let detail=`מוזל: ${l.lowUsage.toFixed(1)}×${l.priceLow}₪`;
@@ -487,6 +572,7 @@ function PaymentDemandModal({unit,month,bill,onClose}){
     lines.push(`שלום ${currentTenant(unit).name},`);
     lines.push(`\nמצורפת דרישת התשלום לחודש ${periodLabel(month)}:\n`);
     if(inclRent) lines.push(`שכירות חודשית: ${fmt(unit.rent)}`);
+    if(arnonaAmt>0) lines.push(`ארנונה + מיסי מושב: ${fmt(arnonaAmt)}`);
     activeLines.forEach(([,l])=>lines.push(`${l.name}: ${lineDetail(l)} = ${fmt(l.amount)}`));
     lines.push(`\nסה״כ לתשלום: ${fmt(grandTotal)}`);
     lines.push(`לתשלום עד: ${due}`);
@@ -546,6 +632,7 @@ function PaymentDemandModal({unit,month,bill,onClose}){
           <div style={{fontSize:12,color:"#666",fontWeight:600,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>בחר פריטים לכלול בחשבון</div>
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
             <ChkRow label={`🏠 שכירות חודשית — ${fmt(unit.rent)}`} checked={inclRent} onChange={()=>setInclRent(v=>!v)} color="#4caf88"/>
+            {(unit.arnonaAmount||0)>0&&<ChkRow label={`🏛 ארנונה + מיסי מושב — ${fmt(unit.arnonaAmount)}`} checked={inclArnona} onChange={()=>setInclArnona(v=>!v)} color="#e8c547"/>}
             {Object.entries(bill.lines).map(([k,l])=>(
               <ChkRow key={k} label={`${l.name} — ${l.usage} ${l.unit} = ${fmt(l.amount)}`} checked={!!inclLines[k]} onChange={()=>setInclLines(prev=>({...prev,[k]:!prev[k]}))} color="#6bc5f8"/>
             ))}
@@ -571,6 +658,7 @@ function PaymentDemandModal({unit,month,bill,onClose}){
             </tr></thead>
             <tbody>
               {inclRent&&<tr><td style={{padding:"6px 8px",borderBottom:"1px solid #eee"}}>שכירות חודשית</td><td style={{padding:"6px 8px",borderBottom:"1px solid #eee",color:"#777"}}>{periodLabel(month)}</td><td style={{padding:"6px 8px",borderBottom:"1px solid #eee",fontWeight:700}}>{fmt(unit.rent)}</td></tr>}
+              {arnonaAmt>0&&<tr><td style={{padding:"6px 8px",borderBottom:"1px solid #eee"}}>ארנונה + מיסי מושב</td><td style={{padding:"6px 8px",borderBottom:"1px solid #eee",color:"#777"}}>{periodLabel(month)}</td><td style={{padding:"6px 8px",borderBottom:"1px solid #eee",fontWeight:700}}>{fmt(arnonaAmt)}</td></tr>}
               {activeLines.map(([k,l])=>(
                 <tr key={k}>
                   <td style={{padding:"6px 8px",borderBottom:"1px solid #eee"}}>{l.name}</td>
@@ -679,10 +767,35 @@ function TariffEditor({tariffs, save, unitsCount=1}){
 
           {/* Sewage */}
           <div style={{background:"#0e0e20",borderRadius:10,padding:14}}>
-            <div style={{fontWeight:700,color:"#aaa",marginBottom:8,fontSize:13}}>ביוב 🚿</div>
-            <label style={S.lbl}>מחיר (₪/מ״ק)
-              <input type="number" step="0.01" value={t.sewage.price} onChange={e=>upT("sewage","price",e.target.value)} style={S.inp}/>
-            </label>
+            <div style={{fontWeight:700,color:"#a78bfa",marginBottom:10,fontSize:13}}>🚿 ביוב — מטה יהודה</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+              <div onClick={()=>save(d=>({...d,tariffs:{...d.tariffs,sewage:{...d.tariffs.sewage,sewageMode:"manual"}}}))}
+                style={{cursor:"pointer",padding:"10px 14px",borderRadius:8,border:`2px solid ${(t.sewage.sewageMode||"manual")==="manual"?"#a78bfa":"#2a2a4a"}`,background:(t.sewage.sewageMode||"manual")==="manual"?"#1a1230":"#0e0e20"}}>
+                <div style={{color:"#a78bfa",fontWeight:700,fontSize:12,marginBottom:4}}>✏️ הזנה ידנית</div>
+                <div style={{color:"#555",fontSize:11}}>תזין סכום ביוב ידנית בכל חשבון</div>
+              </div>
+              <div onClick={()=>save(d=>({...d,tariffs:{...d.tariffs,sewage:{...d.tariffs.sewage,sewageMode:"auto"}}}))}
+                style={{cursor:"pointer",padding:"10px 14px",borderRadius:8,border:`2px solid ${t.sewage.sewageMode==="auto"?"#a78bfa":"#2a2a4a"}`,background:t.sewage.sewageMode==="auto"?"#1a1230":"#0e0e20"}}>
+                <div style={{color:"#a78bfa",fontWeight:700,fontSize:12,marginBottom:4}}>🤖 אוטומטי</div>
+                <div style={{color:"#555",fontSize:11}}>חישוב לפי מנגנון חורף/קיץ מטה יהודה</div>
+              </div>
+            </div>
+            {t.sewage.sewageMode==="auto"&&(
+              <div style={{background:"#12122a",borderRadius:8,padding:12,fontSize:12,color:"#888",marginBottom:10}}>
+                <div style={{color:"#a78bfa",fontWeight:700,marginBottom:6}}>מנגנון חישוב — מטה יהודה</div>
+                <div>חורף (דצ׳–מרץ): 90% × צריכה × {t.sewage.sewageRatePerCubic||6.9} ₪/מ״ק</div>
+                <div style={{marginTop:4}}>קיץ (אפר׳–נוב׳): 100% × ממוצע חורף × {t.sewage.sewageRatePerCubic||6.9} ₪/מ״ק</div>
+                <div style={{marginTop:4,color:"#555",fontSize:11}}>⚠️ דורש היסטוריית קריאות של 4 חודשי חורף</div>
+              </div>
+            )}
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+              <label style={S.lbl}>תעריף ביוב (₪/מ״ק)
+                <input type="number" step="0.01" value={t.sewage.sewageRatePerCubic||6.9} onChange={e=>save(d=>({...d,tariffs:{...d.tariffs,sewage:{...d.tariffs.sewage,sewageRatePerCubic:+e.target.value||0}}}))} style={S.inp}/>
+              </label>
+              <label style={S.lbl}>מחיר ברירת מחדל (₪/מ״ק) — שימוש בחישוב ישן
+                <input type="number" step="0.01" value={t.sewage.price} onChange={e=>upT("sewage","price",e.target.value)} style={S.inp}/>
+              </label>
+            </div>
           </div>
 
         </div>
@@ -990,6 +1103,109 @@ function MeterScanModal({units, utilType, selectedPeriod, onSave, onClose}){
   );
 }
 
+
+// ─── PER-ITEM PAYMENT MODAL ───────────────────────────────────────────────────
+
+function PaymentItemsModal({bill, calc, unit, monthKey, onSave, onClose}){
+  const items = getPayments(bill, calc.lines, unit.rent);
+  const [form, setForm] = React.useState(()=>{
+    // Initialize from existing payments
+    const f = {};
+    for(const [k, meta] of Object.entries(ITEM_LABELS)){
+      if(items[k] !== undefined){
+        f[k] = {
+          paid:    items[k].paid || false,
+          amount:  items[k].amount ?? (k==='rent' ? unit.rent : calc.lines[k]?.amount ?? 0),
+          partial: items[k].amount !== null && items[k].amount < (k==='rent' ? unit.rent : calc.lines[k]?.amount ?? 0),
+        };
+      }
+    }
+    return f;
+  });
+
+  const expectedAmounts = {
+    rent:        unit.rent,
+    water:       calc.lines.water?.amount || 0,
+    electricity: calc.lines.electricity?.amount || 0,
+    sewage:      calc.lines.sewage?.amount || 0,
+  };
+
+  const handleSave = () => {
+    const payments = {};
+    for(const [k, v] of Object.entries(form)){
+      payments[k] = {
+        paid: v.paid,
+        amount: v.paid ? (+v.amount || expectedAmounts[k]) : null,
+        date: v.paid ? new Date().toLocaleDateString("en-CA") : null,
+      };
+    }
+    // bill is fully paid when all items paid
+    const allPaid = Object.values(payments).every(p => p.paid);
+    onSave({payments, paid: allPaid, paidDate: allPaid ? new Date().toLocaleDateString("en-CA") : null});
+  };
+
+  const toggleItem = (k) => setForm(f => ({...f, [k]: {...f[k], paid: !f[k].paid}}));
+  const setAmount = (k, v) => setForm(f => ({...f, [k]: {...f[k], amount: v}}));
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000c",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#12122a",border:"1px solid #2a2a4a",borderRadius:16,padding:24,maxWidth:460,width:"95%",maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
+          <div style={{fontWeight:800,fontSize:17,color:"#e8c547"}}>💳 עדכון תשלומים</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#888",fontSize:22,cursor:"pointer"}}>✕</button>
+        </div>
+        <div style={{color:"#666",fontSize:12,marginBottom:16}}>{unit.name} · {periodLabel(monthKey)}</div>
+
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {Object.entries(form).map(([k, v]) => {
+            const meta = ITEM_LABELS[k];
+            const expected = expectedAmounts[k];
+            const isPartial = v.paid && +v.amount < expected;
+            return (
+              <div key={k} style={{background:"#0e0e20",borderRadius:10,padding:14,border:`1px solid ${v.paid ? meta.color+"44" : "#2a2a4a"}`}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:v.paid?10:0}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,cursor:"pointer"}} onClick={()=>toggleItem(k)}>
+                    <div style={{width:22,height:22,borderRadius:6,background:v.paid?meta.color:"transparent",border:`2px solid ${v.paid?meta.color:"#444"}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+                      {v.paid&&<span style={{color:"#1a1a2e",fontSize:13,fontWeight:900}}>✓</span>}
+                    </div>
+                    <span style={{fontSize:15}}>{meta.icon}</span>
+                    <span style={{color:v.paid?"#ddd":"#888",fontWeight:600}}>{meta.label}</span>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{color:v.paid?meta.color:"#555",fontSize:12}}>{fmt(expected)}</div>
+                    {isPartial&&<div style={{color:"#a78bfa",fontSize:10}}>חלקי</div>}
+                  </div>
+                </div>
+                {v.paid&&(
+                  <div style={{marginTop:8}}>
+                    <label style={{color:"#666",fontSize:11,display:"block",marginBottom:4}}>סכום ששולם (₪)</label>
+                    <input
+                      type="number"
+                      value={v.amount}
+                      onChange={e=>setAmount(k, e.target.value)}
+                      style={{background:"#12122a",border:`1px solid ${meta.color}44`,color:"#ddd",padding:"6px 10px",borderRadius:6,fontSize:13,fontFamily:"inherit",width:"100%",boxSizing:"border-box"}}
+                    />
+                    {+v.amount < expected && +v.amount > 0 && (
+                      <div style={{color:"#a78bfa",fontSize:11,marginTop:3}}>
+                        תשלום חלקי · נותר: {fmt(expected - +v.amount)}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={{display:"flex",gap:10,marginTop:20}}>
+          <button onClick={handleSave} style={{...S.btn("#e8c547","#1a1a2e"),flex:1}}>💾 שמור</button>
+          <button onClick={onClose} style={S.btn("#2a2a4a","#888")}>ביטול</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── BILLS TAB ───────────────────────────────────────────────────────────────
 
 function AddBillForm({units,bills,onAdd}){
@@ -1017,6 +1233,9 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
   const [editKey,setEditKey]=useState(null);
   const [editForm,setEditForm]=useState({});
   const [editError,setEditError]=useState(null);
+  const [partialKey,setPartialKey]=useState(null);
+  const [partialAmount,setPartialAmount]=useState("");
+  const [paymentModal,setPaymentModal]=useState(null); // {k,unit,month,b,calc}
   const [filterUnit,setFilterUnit]=useState("all");
   const [filterPaid,setFilterPaid]=useState("all");
   const [elecUpload,setElecUpload]=useState(null); // {k, unit, month}
@@ -1028,7 +1247,13 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
     if(unitFilter!=null && unit.id!==+unitFilter) continue; // unit_viewer filter
     for(const month of ALL_MONTHS){
       const k=bKey(unit.id,month),b=bills[k];
-      if(b) rows.push({k,unit,month,b,calc:calcBill(b.readings,tariffs,unit,units,(data.buildingBills||{})[month],data.bills,month)});
+      if(b){
+      const _wUsage = (b.readings?.water?.curr??0)-(b.readings?.water?.prev??0);
+      const _sewAmt = tariffs.sewage?.sewageMode==="auto" && b.readings?.water
+        ? calcSewageAuto(month, unit.id, data.bills, _wUsage, tariffs.sewage?.sewageRatePerCubic||6.9)
+        : null;
+      rows.push({k,unit,month,b,calc:calcBill(b.readings,tariffs,unit,units,(data.buildingBills||{})[month],data.bills,month,b.noWaterDiscount||false,_sewAmt!=null?{sewageAmount:_sewAmt}:null)});
+    }
     }
   }
   const visible=rows
@@ -1047,7 +1272,7 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
         // snapshot the final amount at time of locking
         const unit=d.units.find(u=>u.id===+k.split("_")[0]);
         const month=k.split("_")[1];
-        const calc=calcBill(b.readings,d.tariffs,unit,d.units,(d.buildingBills||{})[month],d.bills,month);
+        const calc=calcBill(b.readings,d.tariffs,unit,d.units,(d.buildingBills||{})[month],d.bills,month,b.noWaterDiscount||false);
         return unit.rent+calc.total;
       })():null,
     }}};
@@ -1084,6 +1309,40 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
     });
     setEditError(null);
     setEditKey(null);
+  };
+
+  const savePartial=()=>{
+    const amt=+partialAmount||0;
+    save(d=>({...d,bills:{...d.bills,[partialKey]:{...d.bills[partialKey],
+      partialPaid:true,
+      partialAmount:amt,
+      paidDate:new Date().toLocaleDateString("en-CA"),
+    }}}));
+    setPartialKey(null);
+    setPartialAmount("");
+  };
+
+  const savePayments=({payments, paid, paidDate})=>{
+    save(d=>{
+      const b = d.bills[paymentModal.k];
+      // Also update lockedAmount if now fully paid
+      let lockedAmount = b.lockedAmount;
+      if(paid && !b.locked){
+        const unit=d.units.find(u=>u.id===+paymentModal.k.split("_")[0]);
+        const month=paymentModal.k.split("_")[1];
+        const calc=calcBill(b.readings,d.tariffs,unit,d.units,(d.buildingBills||{})[month],d.bills,month,b.noWaterDiscount||false);
+        lockedAmount = unit.rent + calc.total;
+      }
+      return {...d, bills:{...d.bills,[paymentModal.k]:{
+        ...b,
+        payments,
+        paid,
+        paidDate,
+        locked: paid,
+        lockedAmount: paid ? lockedAmount : null,
+      }}};
+    });
+    setPaymentModal(null);
   };
 
   const addBill=(uid,month)=>{
@@ -1134,6 +1393,28 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
   return(
     <div>
       {editError&&!editKey&&<div style={{position:"fixed",top:20,right:20,zIndex:300,background:"#2a0a0a",border:"1px solid #e85c4a",borderRadius:10,padding:"12px 18px",color:"#e85c4a",fontSize:13,maxWidth:340,boxShadow:"0 4px 20px #000a"}} onClick={()=>setEditError(null)}>⚠️ {editError} <span style={{color:"#666",fontSize:11,display:"block",marginTop:4}}>לחץ לסגירה</span></div>}
+      {paymentModal&&<PaymentItemsModal
+        bill={paymentModal.b}
+        calc={paymentModal.calc}
+        unit={paymentModal.unit}
+        monthKey={paymentModal.month}
+        onSave={savePayments}
+        onClose={()=>setPaymentModal(null)}
+      />}
+      {partialKey&&(
+        <div style={{position:"fixed",inset:0,background:"#000c",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"#12122a",border:"1px solid #2a2a4a",borderRadius:14,padding:24,maxWidth:360,width:"90%"}}>
+            <div style={{fontWeight:800,fontSize:16,color:"#a78bfa",marginBottom:16}}>💵 תשלום חלקי</div>
+            <label style={S.lbl}>סכום ששולם (₪)
+              <input type="number" value={partialAmount} onChange={e=>setPartialAmount(e.target.value)} style={S.inp} autoFocus placeholder="0"/>
+            </label>
+            <div style={{display:"flex",gap:10,marginTop:16}}>
+              <button onClick={savePartial} style={{...S.btn("#a78bfa","#fff"),flex:1}}>💾 שמור</button>
+              <button onClick={()=>setPartialKey(null)} style={S.btn("#2a2a4a","#888")}>ביטול</button>
+            </div>
+          </div>
+        </div>
+      )}
       {demandRow&&<PaymentDemandModal unit={demandRow.unit} month={demandRow.month} bill={demandRow.calc} onClose={()=>setDemand(null)}/>}
       {elecUpload&&<ElectricityUploadModal tariffs={tariffs} buildingBills={data.buildingBills||{}} onSave={saveElecUpload} onClose={()=>setElecUpload(null)}/>}
       {meterScan&&<MeterScanModal units={units} utilType={meterScan} selectedPeriod={meterScanPeriod} onSave={handleMeterScan} onClose={()=>setMeterScan(null)}/>}
@@ -1250,7 +1531,15 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
                       <span style={{color:"#6bc5f8",fontSize:14}}>{periodLabel(month)}</span>
                     </div>
                     <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
-                      <Badge color={b.paid?"#4caf88":"#e85c4a"}>{b.paid?`✓ שולם${b.paidDate?` · ${b.paidDate}`:""}` : "⏳ ממתין לתשלום"}</Badge>
+                      {b.paid
+                        ? <Badge color="#4caf88">✓ שולם{b.paidDate?` · ${b.paidDate}`:""}</Badge>
+                        : (() => {
+                            const pItems = b.payments ? Object.entries(b.payments).filter(([,v])=>v?.paid) : [];
+                            return pItems.length > 0
+                              ? <Badge color="#a78bfa">💳 חלקי ({pItems.length}/{Object.keys(getPayments(b, calc.lines, unit.rent)).length})</Badge>
+                              : <Badge color="#e85c4a">⏳ ממתין לתשלום</Badge>;
+                          })()
+                      }
                       {b.locked&&<Badge color="#e8c547">🔒 נעול</Badge>}
                       {b.locked&&b.lockedAmount!=null&&<span style={{fontSize:11,color:"#e8c547",fontWeight:700}}>{fmt(b.lockedAmount)}</span>}
                     </div>
@@ -1261,9 +1550,10 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
                         <div style={{color:"#666",marginBottom:2}}>{l.name}</div>
                         {l.tiered ? (
                           <div>
-                            <div style={{color:"#4caf88",fontSize:11}}>מוזל: {l.lowUsage.toFixed(1)} {l.unit}</div>
+                            {l.noWaterDiscount&&<div style={{color:"#e85c4a",fontSize:10,marginBottom:2}}>⚠️ ללא הנחת מים</div>}
+                            {!l.noWaterDiscount&&<div style={{color:"#4caf88",fontSize:11}}>מוזל: {l.lowUsage.toFixed(1)} {l.unit}</div>}
                             {l.highUsage>0&&<div style={{color:"#e85c4a",fontSize:11}}>יקר: {l.highUsage.toFixed(1)} {l.unit}</div>}
-                            <div style={{color:"#888",fontSize:10}}>מכסה: {l.persons}×{l.perPersonQty}={l.allowance.toFixed(0)} מ״ק</div>
+                            {!l.noWaterDiscount&&<div style={{color:"#888",fontSize:10}}>מכסה: {l.persons}×{l.perPersonQty}={l.allowance.toFixed(0)} מ״ק</div>}
                           </div>
                         ):tk==="electricity"&&l.periods?.length>1?(
                           <div>
@@ -1291,7 +1581,10 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
                     </div>
                   </div>
                   <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    <button onClick={()=>togglePaid(k)} style={S.btn(b.paid?"#2a3a2a":"#1a3a1a","#4caf88")}>{b.paid?"↩ בטל תשלום":"✓ סמן כשולם"}</button>
+                    <button onClick={()=>setPaymentModal({k,unit,month,b,calc})} style={{...S.btn("#1a2a3a","#4caf88"),fontSize:12}}>💳 תשלומים</button>
+                    {b.paid&&<button onClick={()=>togglePaid(k)} style={{...S.btn("#2a1a1a","#e85c4a"),fontSize:11}}>↩ בטל הכל</button>}
+                    {!b.paid&&<button onClick={()=>{setPartialKey(k);setPartialAmount(b.partialAmount||"");}} style={{...S.btn("#1a1a3a","#a78bfa"),fontSize:12}}>💵 תשלום חלקי</button>}
+                    <button onClick={()=>save(d=>({...d,bills:{...d.bills,[k]:{...d.bills[k],noWaterDiscount:!d.bills[k].noWaterDiscount}}}))} style={{...S.btn(b.noWaterDiscount?"#2a1a0a":"#0e1a2e",b.noWaterDiscount?"#e85c4a":"#6bc5f8"),fontSize:12}} title="מים מוזלים / ללא הנחה">{b.noWaterDiscount?"💧 ללא הנחת מים":"💧 מים מוזלים"}</button>
                     <button onClick={()=>startEdit(row)} style={{...S.btn(b.locked?"#181818":"#1e1e3a",b.locked?"#444":"#888"),cursor:b.locked?"not-allowed":"pointer"}} title={b.locked?"נעול — בטל תשלום כדי לערוך":""}>✏️ עריכת קריאות{b.locked?" 🔒":""}</button>
                     <button onClick={()=>setDemand({unit,month})} style={S.btn("#1e2a3a","#6bc5f8")}>📄 דרישת תשלום</button>
                   </div>
@@ -1328,7 +1621,7 @@ function DashboardTab({data}){
           {unpaid.map(([k,b])=>{
             const[uid,month]=k.split("_"),unit=units.find(u=>u.id===+uid);
             if(!unit)return null;
-            const unit2=units.find(u=>u.id===+uid); const c=calcBill(b.readings,tariffs,unit2,units,(data.buildingBills||{})[month],data.bills,month);
+            const unit2=units.find(u=>u.id===+uid); const c=calcBill(b.readings,tariffs,unit2,units,(data.buildingBills||{})[month],data.bills,month,b.noWaterDiscount||false);
             return(
               <div key={k} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"9px 0",borderBottom:"1px solid #1e1e3a"}}>
                 <div>
@@ -1438,7 +1731,7 @@ function UnitsTab({data,save,readonly=false}){
     setUnitForm({name:u.name,rent:u.rent,persons:u.persons||1,waterMeterId:u.waterMeterId||"",electricMeterId:u.electricMeterId||""});
   };
   const saveUnit=()=>{
-    save(d=>({...d,units:d.units.map(u=>u.id===editingUnit?{...u,...unitForm,rent:+unitForm.rent,persons:+unitForm.persons}:u)}));
+    save(d=>({...d,units:d.units.map(u=>u.id===editingUnit?{...u,...unitForm,rent:+unitForm.rent,persons:+unitForm.persons,arnonaAmount:+unitForm.arnonaAmount||0}:u)}));
     setEditingUnit(null);
   };
 
@@ -1478,7 +1771,7 @@ function UnitsTab({data,save,readonly=false}){
 
   const addUnit=()=>{
     const id=Date.now();
-    save(d=>({...d,units:[...d.units,{id,name:`דירה ${d.units.length+1}`,rent:0,persons:1,vacant:false,waterMeterId:"",electricMeterId:"",
+    save(d=>({...d,units:[...d.units,{id,name:`דירה ${d.units.length+1}`,rent:0,persons:1,vacant:false,arnonaAmount:0,waterMeterId:"",electricMeterId:"",
       tenantHistory:[{name:"",phone:"",startDate:new Date().toLocaleDateString("en-CA"),endDate:null}]
     }]}));
   };
@@ -1591,6 +1884,7 @@ function UnitsTab({data,save,readonly=false}){
                   <label style={S.lbl}>שם יחידה<input value={unitForm.name} onChange={e=>setUnitForm(p=>({...p,name:e.target.value}))} style={S.inp}/></label>
                   <label style={S.lbl}>שכירות (₪)<input type="number" value={unitForm.rent} onChange={e=>setUnitForm(p=>({...p,rent:e.target.value}))} style={S.inp}/></label>
                   <label style={S.lbl}>מספר נפשות<input type="number" min="1" max="20" value={unitForm.persons} onChange={e=>setUnitForm(p=>({...p,persons:e.target.value}))} style={S.inp}/></label>
+                  <label style={S.lbl}>ארנונה + מיסי מושב (₪/חודש) — 0 אם כלול בשכירות<input type="number" min="0" value={unitForm.arnonaAmount||0} onChange={e=>setUnitForm(p=>({...p,arnonaAmount:e.target.value}))} style={S.inp}/></label>
                   <label style={S.lbl}>💧 מספר מונה מים<input value={unitForm.waterMeterId} onChange={e=>setUnitForm(p=>({...p,waterMeterId:e.target.value}))} style={S.inp} placeholder="12345678"/></label>
                   <label style={S.lbl}>⚡ מספר מונה חשמל<input value={unitForm.electricMeterId} onChange={e=>setUnitForm(p=>({...p,electricMeterId:e.target.value}))} style={S.inp} placeholder="87654321"/></label>
                   <div style={{display:"flex",gap:8,marginTop:12}}>
@@ -1625,9 +1919,15 @@ function UnitsTab({data,save,readonly=false}){
                   </div>
 
                   {/* Rent */}
-                  <div style={{borderTop:"1px solid #1e1e3a",paddingTop:10,display:"flex",justifyContent:"space-between",marginBottom:12}}>
-                    <span style={{color:"#666",fontSize:13}}>שכירות חודשית</span>
-                    <span style={{fontWeight:800,color:"#4caf88"}}>{fmt(u.rent)}</span>
+                  <div style={{borderTop:"1px solid #1e1e3a",paddingTop:10,marginBottom:12}}>
+                    <div style={{display:"flex",justifyContent:"space-between"}}>
+                      <span style={{color:"#666",fontSize:13}}>שכירות חודשית</span>
+                      <span style={{fontWeight:800,color:"#4caf88"}}>{fmt(u.rent)}</span>
+                    </div>
+                    {(u.arnonaAmount||0)>0&&<div style={{display:"flex",justifyContent:"space-between",marginTop:4}}>
+                      <span style={{color:"#666",fontSize:12}}>ארנונה + מיסי מושב</span>
+                      <span style={{color:"#e8c547",fontSize:12,fontWeight:700}}>{fmt(u.arnonaAmount)}</span>
+                    </div>}
                   </div>
 
                   {/* Actions — hidden for viewers */}
@@ -1668,7 +1968,7 @@ function ExcelPanel({data, save}){
       const [uid,period]=k.split('_');
       const unit=units.find(u=>u.id===+uid); if(!unit) continue;
       const tenant=tenantAtPeriod(unit,period);
-      const calc=calcBill(b.readings,tariffs,unit,units,(data.buildingBills||{})[period],data.bills,period);
+      const calc=calcBill(b.readings,tariffs,unit,units,(data.buildingBills||{})[period],data.bills,period,b.noWaterDiscount||false);
       const w=b.readings?.water||{},el=b.readings?.electricity||{},sv=b.readings?.sewage||{};
       const finalTotal = b.locked && b.lockedAmount!=null ? b.lockedAmount : unit.rent+calc.total;
       rows.push([unit.name,periodLabel(period),tenant.name,tenant.phone,unit.rent,
@@ -1850,7 +2150,7 @@ function ReportsTab({data, unitFilter=null}){
       const tenant = history.find(t => t.startDate <= periodDate && (!t.endDate || t.endDate >= periodDate))
                   || history[history.length-1]
                   || {name:"לא ידוע", phone:""};
-      const calc = calcBill(b.readings, tariffs, unit, units, (data.buildingBills||{})[periodKey], data.bills, periodKey);
+      const calc = calcBill(b.readings, tariffs, unit, units, (data.buildingBills||{})[periodKey], data.bills, periodKey, b.noWaterDiscount||false);
       rows.push({k, unit, periodKey, b, calc, tenant});
     }
   }
