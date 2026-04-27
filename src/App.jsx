@@ -536,7 +536,7 @@ function PaymentDemandModal({unit,month,bill,onClose}){
     <div class="meta" style="text-align:left"><strong>תאריך הפקה:</strong> ${today}<br/><strong>לתשלום עד:</strong> ${due}</div>
   </div>
   <table><thead><tr><th>פריט</th><th>פירוט</th><th>סכום</th></tr></thead><tbody>
-    ${inclRent?`<tr><td>שכירות חודשית</td><td>${periodLabel(month)}</td><td>${fmt(unit.rent)}</td></tr>":""}
+    ${inclRent?`<tr><td>שכירות חודשית</td><td>${periodLabel(month)}</td><td>${fmt(unit.rent)}</td></tr>`:""}
     ${arnonaAmt>0?`<tr><td>ארנונה + מיסי מושב</td><td>${periodLabel(month)}</td><td>${fmt(arnonaAmt)}</td></tr>`:""}
     ${activeLines.map(([,l])=>`<tr><td>${l.name}</td><td>${lineDetail(l)}</td><td>${fmt(l.amount)}</td></tr>`).join("")}
   </tbody><tfoot><tr class="tot"><td colspan="2">סה״כ לתשלום</td><td>${fmt(grandTotal)}</td></tr></tfoot></table>
@@ -1715,9 +1715,103 @@ function FinanceTab({data,save,readonly=false}){
   );
 }
 
+
+// ─── TENANTS MODAL ────────────────────────────────────────────────────────────
+
+function TenantsModal({unit, onSave, onClose}){
+  const [tenants, setTenants] = React.useState(
+    unit.tenants?.length ? unit.tenants.map(t=>({...t}))
+    : [{id:Date.now(), name:"", idNum:"", phone:"", email:"", from:"", to:"", active:true}]
+  );
+  const [showHistory, setShowHistory] = React.useState(false);
+
+  const active   = tenants.filter(t=>t.active);
+  const inactive = tenants.filter(t=>!t.active);
+
+  const addTenant = () => setTenants(prev=>[...prev, {id:Date.now(), name:"", idNum:"", phone:"", email:"", from:new Date().toLocaleDateString("en-CA"), to:"", active:true}]);
+
+  const update = (id, field, val) => setTenants(prev=>prev.map(t=>t.id===id?{...t,[field]:val}:t));
+
+  const deactivate = (id) => setTenants(prev=>prev.map(t=>t.id===id?{...t,active:false,to:t.to||new Date().toLocaleDateString("en-CA")}:t));
+
+  const remove = (id) => setTenants(prev=>prev.filter(t=>t.id!==id));
+
+  const TenantForm = ({t}) => (
+    <div style={{background:"#0e0e20",borderRadius:10,padding:14,marginBottom:10,border:`1px solid ${t.active?"#2a4a2a":"#2a2a4a"}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{color:t.active?"#4caf88":"#555",fontSize:12,fontWeight:700}}>
+          {t.active?"👤 שוכר פעיל":"📁 שוכר לשעבר"}
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          {t.active&&active.length>1&&<button onClick={()=>deactivate(t.id)} style={{...S.btn("#1a2a1a","#e8c547"),fontSize:11}}>סיים שכירות</button>}
+          {!t.active&&<button onClick={()=>remove(t.id)} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:12}}>🗑</button>}
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <label style={S.lbl}>שם מלא
+          <input value={t.name} onChange={e=>update(t.id,"name",e.target.value)} style={S.inp} placeholder="ישראל ישראלי"/>
+        </label>
+        <label style={S.lbl}>ת.ז.
+          <input value={t.idNum||""} onChange={e=>update(t.id,"idNum",e.target.value)} style={S.inp} placeholder="000000000"/>
+        </label>
+        <label style={S.lbl}>טלפון
+          <input value={t.phone||""} onChange={e=>update(t.id,"phone",e.target.value)} style={S.inp} placeholder="050-0000000" dir="ltr"/>
+        </label>
+        <label style={S.lbl}>מייל
+          <input value={t.email||""} onChange={e=>update(t.id,"email",e.target.value)} style={S.inp} placeholder="name@email.com" dir="ltr"/>
+        </label>
+        <label style={S.lbl}>תאריך כניסה
+          <input type="date" value={t.from||""} onChange={e=>update(t.id,"from",e.target.value)} style={S.inp}/>
+        </label>
+        {!t.active&&<label style={S.lbl}>תאריך יציאה
+          <input type="date" value={t.to||""} onChange={e=>update(t.id,"to",e.target.value)} style={S.inp}/>
+        </label>}
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"#000c",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{background:"#12122a",border:"1px solid #2a2a4a",borderRadius:16,padding:24,maxWidth:520,width:"95%",maxHeight:"90vh",overflowY:"auto"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div style={{fontWeight:800,fontSize:17,color:"#e8c547"}}>👥 שוכרים — {unit.name}</div>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#888",fontSize:22,cursor:"pointer"}}>✕</button>
+        </div>
+
+        {/* Active tenants */}
+        {active.map(t=><TenantForm key={t.id} t={t}/>)}
+
+        <button onClick={addTenant} style={{...S.btn("#1a2a3a","#6bc5f8"),width:"100%",marginBottom:16,fontSize:13}}>+ הוסף שוכר</button>
+
+        {/* History */}
+        {inactive.length>0&&(
+          <>
+            <button onClick={()=>setShowHistory(v=>!v)} style={{...S.btn("#1a1a2e","#555"),width:"100%",marginBottom:10,fontSize:12}}>
+              📁 היסטוריית שוכרים ({inactive.length}) {showHistory?"▲":"▼"}
+            </button>
+            {showHistory&&inactive.map(t=><TenantForm key={t.id} t={t}/>)}
+          </>
+        )}
+
+        <div style={{display:"flex",gap:10,marginTop:8}}>
+          <button onClick={()=>onSave(tenants)} style={{...S.btn("#e8c547","#1a1a2e"),flex:1}}>💾 שמור</button>
+          <button onClick={onClose} style={S.btn("#2a2a4a","#888")}>ביטול</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── UNITS TAB ────────────────────────────────────────────────────────────────
 
 function UnitsTab({data,save,readonly=false}){
+  const [tenantsModal, setTenantsModal] = useState(null);
+
+  const saveTenants = (tenants) => {
+    save(d=>({...d, units:d.units.map(u=>u.id===tenantsModal.id?{...u,tenants}:u)}));
+    setTenantsModal(null);
+  };
+
   const{units}=data;
   const{confirm:confirmDlg, ConfirmModal}=useConfirm();
   const[editingUnit,setEditingUnit]=useState(null);   // unit id for basic edit
@@ -1872,6 +1966,7 @@ function UnitsTab({data,save,readonly=false}){
         <div style={{color:"#888"}}>{units.length} יחידות דיור</div>
 {!readonly&&<button onClick={addUnit} style={S.btn("#e8c547","#1a1a2e")}>+ הוסף יחידה</button>}
       </div>
+      {tenantsModal&&<TenantsModal unit={tenantsModal} onSave={saveTenants} onClose={()=>setTenantsModal(null)}/>}
 
       <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:16}}>
         {units.map(u=>{
@@ -1897,7 +1992,8 @@ function UnitsTab({data,save,readonly=false}){
                   {/* Header */}
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
                     <div style={{fontWeight:800,fontSize:18,color:"#e8c547"}}>{u.name}</div>
-                    {!readonly&&<button onClick={()=>startEditUnit(u)} style={{background:"none",border:"1px solid #2a2a4a",color:"#888",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:12}}>✏️</button>}
+                    <button onClick={()=>setTenantsModal(u)} style={{background:"none",border:"1px solid #2a4a2a",color:"#4caf88",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:12}}>👥 שוכרים</button>
+                  {!readonly&&<button onClick={()=>startEditUnit(u)} style={{background:"none",border:"1px solid #2a2a4a",color:"#888",borderRadius:6,padding:"4px 10px",cursor:"pointer",fontSize:12}}>✏️</button>}
                   </div>
 
                   {/* Current tenant */}
