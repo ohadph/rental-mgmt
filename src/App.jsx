@@ -43,7 +43,7 @@ const DEFAULT_DATA = {
       billingMonths:2,
     },
     electricity: { name:"חשמל", unit:"קוט״ש", price:0.65, tiered:false, fixedCostTotal:0, fixedSplitMethod:"equal", billingMonths:2 },
-    sewage:      { name:"ביוב", unit:"מ״ק",   price:4.2,  tiered:false, billingMonths:2 },
+    sewage:      { name:"ביוב", unit:"מ״ק",   price:4.2,  tiered:false, billingMonths:2, sewageMode:"manual", sewageRatePerCubic:6.9 },
   },
 };
 
@@ -262,16 +262,31 @@ const calcSewageAuto = (periodKey, unitId, bills, waterUsage, sewageRatePerCubic
 
 
 // Get the current active tenant for a unit
+// Supports both old tenantHistory[] and new tenants[] structures
 const currentTenant = (unit) => {
+  // New structure: unit.tenants with active flag
+  const newTenants = unit.tenants?.filter(t=>t.active);
+  if(newTenants?.length) {
+    const t = newTenants[0];
+    return {name: newTenants.map(t=>t.name).filter(Boolean).join(" + "), phone:t.phone||"", email:t.email||""};
+  }
+  // Old structure: tenantHistory with endDate
   const h = unit.tenantHistory || [];
-  return h.find(t => !t.endDate) || h[h.length-1] || {name:"ללא שוכר", phone:""};
+  const cur = h.find(t => !t.endDate) || h[h.length-1];
+  return cur || {name:"ללא שוכר", phone:""};
 };
 
 // Get tenant active at a given month (YYYY-MM)
 const tenantAtPeriod = (unit, monthKey) => {
+  // New structure
+  const newTenants = unit.tenants?.filter(t=>t.active);
+  if(newTenants?.length){
+    const t = newTenants[0];
+    return {name: newTenants.map(t=>t.name).filter(Boolean).join(" + "), phone:t.phone||""};
+  }
+  // Old structure
   const h = unit.tenantHistory || [];
   const d = monthKey + "-01";
-  // Find tenant whose period includes this month
   return h.find(t => t.startDate <= d && (!t.endDate || t.endDate >= d))
       || currentTenant(unit);
 };
@@ -783,7 +798,7 @@ function TariffEditor({tariffs, save, unitsCount=1}){
             {t.sewage.sewageMode==="auto"&&(
               <div style={{background:"#12122a",borderRadius:8,padding:12,fontSize:12,color:"#888",marginBottom:10}}>
                 <div style={{color:"#a78bfa",fontWeight:700,marginBottom:6}}>מנגנון חישוב — מטה יהודה</div>
-                <div>חורף (דצ׳–מרץ): 90% × צריכה × {t.sewage.sewageRatePerCubic||6.9} ₪/מ״ק</div>
+                <div>חורף (דצ׳–מרץ): 100% × צריכה × {t.sewage.sewageRatePerCubic||6.9} ₪/מ״ק</div>
                 <div style={{marginTop:4}}>קיץ (אפר׳–נוב׳): 100% × ממוצע חורף × {t.sewage.sewageRatePerCubic||6.9} ₪/מ״ק</div>
                 <div style={{marginTop:4,color:"#555",fontSize:11}}>⚠️ דורש היסטוריית קריאות של 4 חודשי חורף</div>
               </div>
@@ -1109,10 +1124,10 @@ function MeterScanModal({units, utilType, selectedPeriod, onSave, onClose}){
 function PaymentItemsModal({bill, calc, unit, monthKey, onSave, onClose}){
   const items = getPayments(bill, calc.lines, unit.rent);
   const [form, setForm] = React.useState(()=>{
-    // Initialize from existing payments
+    // Initialize from existing payments — only show items with actual calc data
     const f = {};
     for(const [k, meta] of Object.entries(ITEM_LABELS)){
-      if(items[k] !== undefined){
+      if(items[k] !== undefined && (k==='rent' || calc.lines[k])){
         f[k] = {
           paid:    items[k].paid || false,
           amount:  items[k].amount ?? (k==='rent' ? unit.rent : calc.lines[k]?.amount ?? 0),
@@ -1266,10 +1281,12 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
     return{...d,bills:{...d.bills,[k]:{
       ...b,
       paid:nowPaid,
-      locked:nowPaid,                                          // lock when paid, unlock when reversed
+      locked:nowPaid,
       paidDate:nowPaid?new Date().toLocaleDateString("en-CA"):null,
+      payments:nowPaid?b.payments:null,   // clear payments when reverting
+      partialPaid:nowPaid?b.partialPaid:false,
+      partialAmount:nowPaid?b.partialAmount:null,
       lockedAmount:nowPaid?(()=>{
-        // snapshot the final amount at time of locking
         const unit=d.units.find(u=>u.id===+k.split("_")[0]);
         const month=k.split("_")[1];
         const calc=calcBill(b.readings,d.tariffs,unit,d.units,(d.buildingBills||{})[month],d.bills,month,b.noWaterDiscount||false);
@@ -1363,7 +1380,11 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
   };
 
   const unpaidCount=rows.filter(r=>!r.b.paid).length;
-  const unpaidTotal=rows.filter(r=>!r.b.paid&&!r.unit.vacant).reduce((s,r)=>s+r.unit.rent+r.calc.total,0);
+  const unpaidTotal=rows.filter(r=>!r.b.paid&&!r.unit.vacant).reduce((s,r)=>{
+    const full=r.b.locked&&r.b.lockedAmount!=null?r.b.lockedAmount:r.unit.rent+r.calc.total;
+    const paidSoFar=r.b.payments?Object.values(r.b.payments).reduce((a,p)=>a+(p?.paid&&p?.amount?+p.amount:0),0):0;
+    return s+Math.max(0,full-paidSoFar);
+  },0);
   const demandRow=demand?rows.find(r=>r.k===bKey(demand.unit.id,demand.month)):null;
 
   const saveElecUpload=({periods,fixedCosts,fixedSplitMethod,periodKey})=>{
@@ -1577,7 +1598,22 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
                     </div>
                     <div style={{background:"#1a1a2e",border:"1px solid #e8c54766",borderRadius:8,padding:"8px 14px",fontSize:12,minWidth:120}}>
                       <div style={{color:"#888",marginBottom:2}}>סה״כ לתשלום</div>
-                      <div style={{color:"#e8c547",fontWeight:900,fontSize:20}}>{fmt(unit.rent+calc.total)}</div>
+                      {(()=>{
+                        const fullTotal = b.locked&&b.lockedAmount!=null ? b.lockedAmount : unit.rent+calc.total;
+                        // Sum already paid amounts from payments object
+                        const paidSoFar = b.payments
+                          ? Object.values(b.payments).reduce((s,p)=>s+(p?.paid&&p?.amount?+p.amount:0),0)
+                          : 0;
+                        const remaining = Math.max(0, fullTotal - paidSoFar);
+                        return b.paid
+                          ? <div style={{color:"#4caf88",fontWeight:900,fontSize:16}}>✓ שולם במלואו</div>
+                          : paidSoFar>0
+                            ? <>
+                                <div style={{color:"#e8c547",fontWeight:900,fontSize:18}}>{fmt(remaining)}</div>
+                                <div style={{color:"#a78bfa",fontSize:10,marginTop:2}}>שולם: {fmt(paidSoFar)} · מתוך {fmt(fullTotal)}</div>
+                              </>
+                            : <div style={{color:"#e8c547",fontWeight:900,fontSize:20}}>{fmt(fullTotal)}</div>;
+                      })()}
                     </div>
                   </div>
                   <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
