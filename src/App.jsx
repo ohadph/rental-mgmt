@@ -1754,6 +1754,43 @@ function FinanceTab({data,save,readonly=false}){
 
 // ─── TENANTS MODAL ────────────────────────────────────────────────────────────
 
+// TenantForm must be defined OUTSIDE TenantsModal to prevent re-mount on every keystroke
+function TenantForm({t, activeCount, onUpdate, onDeactivate, onRemove}){
+  return(
+    <div style={{background:"#0e0e20",borderRadius:10,padding:14,marginBottom:10,border:`1px solid ${t.active?"#2a4a2a":"#2a2a4a"}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <div style={{color:t.active?"#4caf88":"#555",fontSize:12,fontWeight:700}}>
+          {t.active?"👤 שוכר פעיל":"📁 שוכר לשעבר"}
+        </div>
+        <div style={{display:"flex",gap:6}}>
+          {t.active&&activeCount>1&&<button onClick={()=>onDeactivate(t.id)} style={{...S.btn("#1a2a1a","#e8c547"),fontSize:11}}>סיים שכירות</button>}
+          {!t.active&&<button onClick={()=>onRemove(t.id)} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:12}}>🗑</button>}
+        </div>
+      </div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+        <label style={S.lbl}>שם מלא
+          <input value={t.name} onChange={e=>onUpdate(t.id,"name",e.target.value)} style={S.inp} placeholder="ישראל ישראלי"/>
+        </label>
+        <label style={S.lbl}>ת.ז.
+          <input value={t.idNum||""} onChange={e=>onUpdate(t.id,"idNum",e.target.value)} style={S.inp} placeholder="000000000"/>
+        </label>
+        <label style={S.lbl}>טלפון
+          <input value={t.phone||""} onChange={e=>onUpdate(t.id,"phone",e.target.value)} style={S.inp} placeholder="050-0000000" dir="ltr"/>
+        </label>
+        <label style={S.lbl}>מייל
+          <input value={t.email||""} onChange={e=>onUpdate(t.id,"email",e.target.value)} style={S.inp} placeholder="name@email.com" dir="ltr"/>
+        </label>
+        <label style={S.lbl}>תאריך כניסה
+          <input type="date" value={t.from||""} onChange={e=>onUpdate(t.id,"from",e.target.value)} style={S.inp}/>
+        </label>
+        {!t.active&&<label style={S.lbl}>תאריך יציאה
+          <input type="date" value={t.to||""} onChange={e=>onUpdate(t.id,"to",e.target.value)} style={S.inp}/>
+        </label>}
+      </div>
+    </div>
+  );
+}
+
 function TenantsModal({unit, onSave, onClose}){
   const [tenants, setTenants] = React.useState(
     unit.tenants?.length ? unit.tenants.map(t=>({...t}))
@@ -1764,47 +1801,10 @@ function TenantsModal({unit, onSave, onClose}){
   const active   = tenants.filter(t=>t.active);
   const inactive = tenants.filter(t=>!t.active);
 
-  const addTenant = () => setTenants(prev=>[...prev, {id:Date.now(), name:"", idNum:"", phone:"", email:"", from:new Date().toLocaleDateString("en-CA"), to:"", active:true}]);
-
-  const update = (id, field, val) => setTenants(prev=>prev.map(t=>t.id===id?{...t,[field]:val}:t));
-
+  const addTenant  = () => setTenants(prev=>[...prev, {id:Date.now(), name:"", idNum:"", phone:"", email:"", from:new Date().toLocaleDateString("en-CA"), to:"", active:true}]);
+  const update     = (id, field, val) => setTenants(prev=>prev.map(t=>t.id===id?{...t,[field]:val}:t));
   const deactivate = (id) => setTenants(prev=>prev.map(t=>t.id===id?{...t,active:false,to:t.to||new Date().toLocaleDateString("en-CA")}:t));
-
-  const remove = (id) => setTenants(prev=>prev.filter(t=>t.id!==id));
-
-  const TenantForm = ({t}) => (
-    <div style={{background:"#0e0e20",borderRadius:10,padding:14,marginBottom:10,border:`1px solid ${t.active?"#2a4a2a":"#2a2a4a"}`}}>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-        <div style={{color:t.active?"#4caf88":"#555",fontSize:12,fontWeight:700}}>
-          {t.active?"👤 שוכר פעיל":"📁 שוכר לשעבר"}
-        </div>
-        <div style={{display:"flex",gap:6}}>
-          {t.active&&active.length>1&&<button onClick={()=>deactivate(t.id)} style={{...S.btn("#1a2a1a","#e8c547"),fontSize:11}}>סיים שכירות</button>}
-          {!t.active&&<button onClick={()=>remove(t.id)} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:12}}>🗑</button>}
-        </div>
-      </div>
-      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-        <label style={S.lbl}>שם מלא
-          <input value={t.name} onChange={e=>update(t.id,"name",e.target.value)} style={S.inp} placeholder="ישראל ישראלי"/>
-        </label>
-        <label style={S.lbl}>ת.ז.
-          <input value={t.idNum||""} onChange={e=>update(t.id,"idNum",e.target.value)} style={S.inp} placeholder="000000000"/>
-        </label>
-        <label style={S.lbl}>טלפון
-          <input value={t.phone||""} onChange={e=>update(t.id,"phone",e.target.value)} style={S.inp} placeholder="050-0000000" dir="ltr"/>
-        </label>
-        <label style={S.lbl}>מייל
-          <input value={t.email||""} onChange={e=>update(t.id,"email",e.target.value)} style={S.inp} placeholder="name@email.com" dir="ltr"/>
-        </label>
-        <label style={S.lbl}>תאריך כניסה
-          <input type="date" value={t.from||""} onChange={e=>update(t.id,"from",e.target.value)} style={S.inp}/>
-        </label>
-        {!t.active&&<label style={S.lbl}>תאריך יציאה
-          <input type="date" value={t.to||""} onChange={e=>update(t.id,"to",e.target.value)} style={S.inp}/>
-        </label>}
-      </div>
-    </div>
-  );
+  const remove     = (id) => setTenants(prev=>prev.filter(t=>t.id!==id));
 
   return(
     <div style={{position:"fixed",inset:0,background:"#000c",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
@@ -1815,7 +1815,7 @@ function TenantsModal({unit, onSave, onClose}){
         </div>
 
         {/* Active tenants */}
-        {active.map(t=><TenantForm key={t.id} t={t}/>)}
+        {active.map(t=><TenantForm key={t.id} t={t} activeCount={active.length} onUpdate={update} onDeactivate={deactivate} onRemove={remove}/>)}
 
         <button onClick={addTenant} style={{...S.btn("#1a2a3a","#6bc5f8"),width:"100%",marginBottom:16,fontSize:13}}>+ הוסף שוכר</button>
 
@@ -1825,7 +1825,7 @@ function TenantsModal({unit, onSave, onClose}){
             <button onClick={()=>setShowHistory(v=>!v)} style={{...S.btn("#1a1a2e","#555"),width:"100%",marginBottom:10,fontSize:12}}>
               📁 היסטוריית שוכרים ({inactive.length}) {showHistory?"▲":"▼"}
             </button>
-            {showHistory&&inactive.map(t=><TenantForm key={t.id} t={t}/>)}
+            {showHistory&&inactive.map(t=><TenantForm key={t.id} t={t} activeCount={active.length} onUpdate={update} onDeactivate={deactivate} onRemove={remove}/>)}
           </>
         )}
 
