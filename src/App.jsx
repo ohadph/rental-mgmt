@@ -1252,7 +1252,6 @@ function AddBillForm({units,bills,onAdd}){
 
 function BillsTab({data,save,readonly=false,unitFilter=null}){
   const {units,bills,tariffs}=data;
-  const {confirm:confirmDlg, ConfirmModal}=useConfirm();
   const [demand,setDemand]=useState(null);
   const [editKey,setEditKey]=useState(null);
   const [editForm,setEditForm]=useState({});
@@ -1427,7 +1426,6 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
   return(
     <div>
       {editError&&!editKey&&<div style={{position:"fixed",top:20,right:20,zIndex:300,background:"#2a0a0a",border:"1px solid #e85c4a",borderRadius:10,padding:"12px 18px",color:"#e85c4a",fontSize:13,maxWidth:340,boxShadow:"0 4px 20px #000a"}} onClick={()=>setEditError(null)}>⚠️ {editError} <span style={{color:"#666",fontSize:11,display:"block",marginTop:4}}>לחץ לסגירה</span></div>}
-      <ConfirmModal/>
       {paymentModal&&<PaymentItemsModal
         bill={paymentModal.b}
         calc={paymentModal.calc}
