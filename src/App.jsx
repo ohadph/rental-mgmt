@@ -65,13 +65,21 @@ const _genPeriods = () => {
   const endYear   = now.getFullYear() + 2;
   const periods = [];
   for(let y=startYear; y<=endYear; y++){
-    for(let m=1; m<=12; m+=2){
+    for(let m=2; m<=12; m+=2){
       const k  = `${y}-${String(m).padStart(2,"0")}`;
       const m2 = String(m+1).padStart(2,"0");
       const l1 = HEB_MONTHS[m-1], l2 = HEB_MONTHS[m];
       periods.push({key:k, label:`${l1}–${l2} ${y}`, months:[k,`${y}-${m2}`]});
     }
+    // December of this year + January of next year
+    periods.push({
+      key:`${y}-12`,
+      label:`${HEB_MONTHS[11]}–${HEB_MONTHS[0]} ${y}–${y+1}`,
+      months:[`${y}-12`,`${y+1}-01`]
+    });
   }
+  // Sort by key
+  periods.sort((a,b)=>a.key.localeCompare(b.key));
   return periods;
 };
 
