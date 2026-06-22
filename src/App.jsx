@@ -1370,6 +1370,10 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
     setPaymentModal(null);
   };
 
+  const deleteBill=(k)=>{
+    save(d=>{const b={...d.bills}; delete b[k]; return{...d,bills:b};});
+  };
+
   const addBill=(uid,month)=>{
     const k=bKey(uid,month);
     if(bills[k]) return;
@@ -1627,6 +1631,7 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
                   <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
                     <button onClick={()=>setPaymentModal({k,unit,month,b,calc})} style={{...S.btn("#1a2a3a","#4caf88"),fontSize:12}}>💳 תשלומים</button>
                     {b.paid&&<button onClick={()=>togglePaid(k)} style={{...S.btn("#2a1a1a","#e85c4a"),fontSize:11}}>↩ בטל הכל</button>}
+                    {!readonly&&!b.paid&&<button onClick={()=>confirmDlg("למחוק את החשבון?",()=>deleteBill(k))} style={{...S.btn("#2a0a0a","#e85c4a"),fontSize:11}}>🗑 מחק</button>}
                     {!b.paid&&<button onClick={()=>{setPartialKey(k);setPartialAmount(b.partialAmount||"");}} style={{...S.btn("#1a1a3a","#a78bfa"),fontSize:12}}>💵 תשלום חלקי</button>}
                     <button onClick={()=>save(d=>({...d,bills:{...d.bills,[k]:{...d.bills[k],noWaterDiscount:!d.bills[k].noWaterDiscount}}}))} style={{...S.btn(b.noWaterDiscount?"#2a1a0a":"#0e1a2e",b.noWaterDiscount?"#e85c4a":"#6bc5f8"),fontSize:12}} title="מים מוזלים / ללא הנחה">{b.noWaterDiscount?"💧 ללא הנחת מים":"💧 מים מוזלים"}</button>
                     <button onClick={()=>startEdit(row)} style={{...S.btn(b.locked?"#181818":"#1e1e3a",b.locked?"#444":"#888"),cursor:b.locked?"not-allowed":"pointer"}} title={b.locked?"נעול — בטל תשלום כדי לערוך":""}>✏️ עריכת קריאות{b.locked?" 🔒":""}</button>
