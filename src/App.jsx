@@ -200,10 +200,12 @@ const calcBill = (readings, tariffs, unit, units, buildingBill, bills, periodKey
 const defaultPayItem = () => ({paid:false, amount:null, date:null});
 
 // Get payments object, with defaults for missing items
-const getPayments = (bill, calcLines, unitRent) => {
+const getPayments = (bill, calcLines, unitRent, periodKey) => {
   const p = bill.payments || {};
   const items = {};
-  items.rent = p.rent || defaultPayItem();
+  // Migrate old 'rent' to 'rent1'
+  items.rent1 = p.rent1 || (p.rent ? {...p.rent} : defaultPayItem());
+  items.rent2 = p.rent2 || defaultPayItem();
   if(calcLines?.water)       items.water       = p.water       || defaultPayItem();
   if(calcLines?.electricity) items.electricity = p.electricity || defaultPayItem();
   if(calcLines?.sewage)      items.sewage      = p.sewage      || defaultPayItem();
@@ -213,19 +215,33 @@ const getPayments = (bill, calcLines, unitRent) => {
 // Is the whole bill fully paid?
 const isBillFullyPaid = (bill, calcLines) => {
   const p = bill.payments || {};
-  const items = ['rent'];
+  const items = ['rent1','rent2'];
   if(calcLines?.water)       items.push('water');
   if(calcLines?.electricity) items.push('electricity');
   if(calcLines?.sewage)      items.push('sewage');
   return items.every(k => p[k]?.paid);
 };
 
-const ITEM_LABELS = {
-  rent:        {label:'שכירות',  icon:'🏠', color:'#4caf88'},
+const UTIL_LABELS = {
   water:       {label:'מים',     icon:'💧', color:'#6bc5f8'},
   electricity: {label:'חשמל',   icon:'⚡', color:'#e8c547'},
   sewage:      {label:'ביוב',    icon:'🚿', color:'#a78bfa'},
 };
+
+// Returns item labels for a given period key (YYYY-MM)
+const getItemLabels = (periodKey) => {
+  const [y, m] = (periodKey||"2026-04").split("-").map(Number);
+  const m2 = m+1 > 12 ? 1 : m+1;
+  const y2 = m+1 > 12 ? y+1 : y;
+  const l1 = HEB_MONTHS[m-1];
+  const l2 = HEB_MONTHS[m2-1];
+  return {
+    rent1: {label:`שכירות ${l1}`,  icon:'🏠', color:'#4caf88'},
+    rent2: {label:`שכירות ${l2}`,  icon:'🏡', color:'#3a9f6a'},
+    ...UTIL_LABELS,
+  };
+};
+
 
 const bKey=(uid,month)=>`${uid}_${month}`;
 
@@ -531,14 +547,16 @@ function PaymentDemandModal({unit,month,bill,onClose}){
   // ── item selection state ──
   const [inclRent, setInclRent] = useState(true);
   const [inclArnona, setInclArnona] = useState((unit.arnonaAmount||0)>0);
+  const rentMonths = 2; // bimonthly billing
+  const rentTotal = unit.rent * rentMonths;
   const [inclLines, setInclLines] = useState(
     ()=>Object.fromEntries(Object.keys(bill.lines).map(k=>[k,true]))
   );
 
   const activeLines = Object.entries(bill.lines).filter(([k])=>inclLines[k]);
   const utilTotal   = activeLines.reduce((s,[,l])=>s+l.amount,0);
-  const arnonaAmt  = (inclArnona&&(unit.arnonaAmount||0)>0) ? (unit.arnonaAmount||0) : 0;
-  const grandTotal  = (inclRent?unit.rent:0) + utilTotal + arnonaAmt;
+  const arnonaAmt  = (inclArnona&&(unit.arnonaAmount||0)>0) ? ((unit.arnonaAmount||0)*rentMonths) : 0;
+  const grandTotal  = (inclRent?rentTotal:0) + utilTotal + arnonaAmt;
 
   // ── build HTML for print / share ──
   const buildHTML = ()=>`<html dir="rtl"><head><meta charset="utf-8"/><style>
@@ -559,7 +577,7 @@ function PaymentDemandModal({unit,month,bill,onClose}){
     <div class="meta" style="text-align:left"><strong>תאריך הפקה:</strong> ${today}<br/><strong>לתשלום עד:</strong> ${due}</div>
   </div>
   <table><thead><tr><th>פריט</th><th>פירוט</th><th>סכום</th></tr></thead><tbody>
-    ${inclRent?`<tr><td>שכירות חודשית</td><td>${periodLabel(month)}</td><td>${fmt(unit.rent)}</td></tr>`:""}
+    ${inclRent?`<tr><td>שכירות (${rentMonths} חודשים)</td><td>${periodLabel(month)}</td><td>${fmt(rentTotal)}</td></tr>`:""}
     ${arnonaAmt>0?`<tr><td>ארנונה + מיסי מושב</td><td>${periodLabel(month)}</td><td>${fmt(arnonaAmt)}</td></tr>`:""}
     ${activeLines.map(([,l])=>`<tr><td>${l.name}</td><td>${lineDetail(l)}</td><td>${fmt(l.amount)}</td></tr>`).join("")}
   </tbody><tfoot><tr class="tot"><td colspan="2">סה״כ לתשלום</td><td>${fmt(grandTotal)}</td></tr></tfoot></table>
@@ -574,7 +592,7 @@ function PaymentDemandModal({unit,month,bill,onClose}){
     lines.push(`לכבוד: ${currentTenant(unit).name} | ${unit.name}`);
     lines.push(`לתשלום עד: ${due}`);
     lines.push("──────────────────");
-    if(inclRent) lines.push(`🏠 שכירות חודשית: ${fmt(unit.rent)}`);
+    if(inclRent) lines.push(`🏠 שכירות (${rentMonths} חודשים): ${fmt(rentTotal)}`);
     if(arnonaAmt>0) lines.push(`🏛 ארנונה + מיסי מושב: ${fmt(arnonaAmt)}`);
     activeLines.forEach(([,l])=>{
       if(l.tiered){
@@ -594,7 +612,7 @@ function PaymentDemandModal({unit,month,bill,onClose}){
     const lines=[];
     lines.push(`שלום ${currentTenant(unit).name},`);
     lines.push(`\nמצורפת דרישת התשלום לחודש ${periodLabel(month)}:\n`);
-    if(inclRent) lines.push(`שכירות חודשית: ${fmt(unit.rent)}`);
+    if(inclRent) lines.push(`שכירות (${rentMonths} חודשים): ${fmt(rentTotal)}`);
     if(arnonaAmt>0) lines.push(`ארנונה + מיסי מושב: ${fmt(arnonaAmt)}`);
     activeLines.forEach(([,l])=>lines.push(`${l.name}: ${lineDetail(l)} = ${fmt(l.amount)}`));
     lines.push(`\nסה״כ לתשלום: ${fmt(grandTotal)}`);
@@ -654,7 +672,7 @@ function PaymentDemandModal({unit,month,bill,onClose}){
         <div style={{marginBottom:18}}>
           <div style={{fontSize:12,color:"#666",fontWeight:600,marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>בחר פריטים לכלול בחשבון</div>
           <div style={{display:"flex",flexDirection:"column",gap:6}}>
-            <ChkRow label={`🏠 שכירות חודשית — ${fmt(unit.rent)}`} checked={inclRent} onChange={()=>setInclRent(v=>!v)} color="#4caf88"/>
+            <ChkRow label={`🏠 שכירות (${rentMonths} חודשים) — ${fmt(rentTotal)}`} checked={inclRent} onChange={()=>setInclRent(v=>!v)} color="#4caf88"/>
             {(unit.arnonaAmount||0)>0&&<ChkRow label={`🏛 ארנונה + מיסי מושב — ${fmt(unit.arnonaAmount)}`} checked={inclArnona} onChange={()=>setInclArnona(v=>!v)} color="#e8c547"/>}
             {Object.entries(bill.lines).map(([k,l])=>(
               <ChkRow key={k} label={`${l.name} — ${l.usage} ${l.unit} = ${fmt(l.amount)}`} checked={!!inclLines[k]} onChange={()=>setInclLines(prev=>({...prev,[k]:!prev[k]}))} color="#6bc5f8"/>
@@ -680,7 +698,7 @@ function PaymentDemandModal({unit,month,bill,onClose}){
               <th style={{padding:"6px 8px",textAlign:"right"}}>סכום</th>
             </tr></thead>
             <tbody>
-              {inclRent&&<tr><td style={{padding:"6px 8px",borderBottom:"1px solid #eee"}}>שכירות חודשית</td><td style={{padding:"6px 8px",borderBottom:"1px solid #eee",color:"#777"}}>{periodLabel(month)}</td><td style={{padding:"6px 8px",borderBottom:"1px solid #eee",fontWeight:700}}>{fmt(unit.rent)}</td></tr>}
+              {inclRent&&<tr><td style={{padding:"6px 8px",borderBottom:"1px solid #eee"}}>שכירות ({rentMonths} חודשים)</td><td style={{padding:"6px 8px",borderBottom:"1px solid #eee",color:"#777"}}>{periodLabel(month)}</td><td style={{padding:"6px 8px",borderBottom:"1px solid #eee",fontWeight:700}}>{fmt(rentTotal)}</td></tr>}
               {arnonaAmt>0&&<tr><td style={{padding:"6px 8px",borderBottom:"1px solid #eee"}}>ארנונה + מיסי מושב</td><td style={{padding:"6px 8px",borderBottom:"1px solid #eee",color:"#777"}}>{periodLabel(month)}</td><td style={{padding:"6px 8px",borderBottom:"1px solid #eee",fontWeight:700}}>{fmt(arnonaAmt)}</td></tr>}
               {activeLines.map(([k,l])=>(
                 <tr key={k}>
@@ -1130,16 +1148,17 @@ function MeterScanModal({units, utilType, selectedPeriod, onSave, onClose}){
 // ─── PER-ITEM PAYMENT MODAL ───────────────────────────────────────────────────
 
 function PaymentItemsModal({bill, calc, unit, monthKey, onSave, onClose}){
-  const items = getPayments(bill, calc.lines, unit.rent);
+  const ITEM_LABELS = getItemLabels(monthKey);
+  const items = getPayments(bill, calc.lines, unit.rent, monthKey);
   const [form, setForm] = React.useState(()=>{
     // Initialize from existing payments — only show items with actual calc data
     const f = {};
     for(const [k, meta] of Object.entries(ITEM_LABELS)){
-      if(items[k] !== undefined && (k==='rent' || calc.lines[k])){
+      if(items[k] !== undefined && (k==='rent1'||k==='rent2' || calc.lines[k])){
         f[k] = {
           paid:    items[k].paid || false,
-          amount:  items[k].amount ?? (k==='rent' ? unit.rent : calc.lines[k]?.amount ?? 0),
-          partial: items[k].amount !== null && items[k].amount < (k==='rent' ? unit.rent : calc.lines[k]?.amount ?? 0),
+          amount:  items[k].amount ?? (k==='rent' ? unit.rent*2 : calc.lines[k]?.amount ?? 0),
+          partial: items[k].amount !== null && items[k].amount < (k==='rent' ? unit.rent*2 : calc.lines[k]?.amount ?? 0),
         };
       }
     }
@@ -1147,7 +1166,8 @@ function PaymentItemsModal({bill, calc, unit, monthKey, onSave, onClose}){
   });
 
   const expectedAmounts = {
-    rent:        unit.rent,
+    rent1:       unit.rent,
+    rent2:       unit.rent,
     water:       calc.lines.water?.amount || 0,
     electricity: calc.lines.electricity?.amount || 0,
     sewage:      calc.lines.sewage?.amount || 0,
@@ -1163,7 +1183,7 @@ function PaymentItemsModal({bill, calc, unit, monthKey, onSave, onClose}){
       };
     }
     // bill is fully paid when all items paid
-    const allPaid = Object.values(payments).every(p => p.paid);
+    const allPaid = ['rent1','rent2',...Object.keys(payments).filter(k=>k!=='rent1'&&k!=='rent2')].every(k=>!payments[k]||payments[k].paid);
     onSave({payments, paid: allPaid, paidDate: allPaid ? new Date().toLocaleDateString("en-CA") : null});
   };
 
@@ -1298,7 +1318,7 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
         const unit=d.units.find(u=>u.id===+k.split("_")[0]);
         const month=k.split("_")[1];
         const calc=calcBill(b.readings,d.tariffs,unit,d.units,(d.buildingBills||{})[month],d.bills,month,b.noWaterDiscount||false);
-        return unit.rent+calc.total;
+        return unit.rent*2+calc.total;
       })():null,
     }}};
   });
@@ -1356,7 +1376,7 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
         const unit=d.units.find(u=>u.id===+paymentModal.k.split("_")[0]);
         const month=paymentModal.k.split("_")[1];
         const calc=calcBill(b.readings,d.tariffs,unit,d.units,(d.buildingBills||{})[month],d.bills,month,b.noWaterDiscount||false);
-        lockedAmount = unit.rent + calc.total;
+        lockedAmount = unit.rent*2 + calc.total;
       }
       return {...d, bills:{...d.bills,[paymentModal.k]:{
         ...b,
@@ -1393,7 +1413,7 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
 
   const unpaidCount=rows.filter(r=>!r.b.paid).length;
   const unpaidTotal=rows.filter(r=>!r.b.paid&&!r.unit.vacant).reduce((s,r)=>{
-    const full=r.b.locked&&r.b.lockedAmount!=null?r.b.lockedAmount:r.unit.rent+r.calc.total;
+    const full=r.b.locked&&r.b.lockedAmount!=null?r.b.lockedAmount:r.unit.rent*2+r.calc.total;
     const paidSoFar=r.b.payments?Object.values(r.b.payments).reduce((a,p)=>a+(p?.paid&&p?.amount?+p.amount:0),0):0;
     return s+Math.max(0,full-paidSoFar);
   },0);
@@ -1569,7 +1589,7 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
                         : (() => {
                             const pItems = b.payments ? Object.entries(b.payments).filter(([,v])=>v?.paid) : [];
                             return pItems.length > 0
-                              ? <Badge color="#a78bfa">💳 חלקי ({pItems.length}/{Object.keys(getPayments(b, calc.lines, unit.rent)).length})</Badge>
+                              ? <Badge color="#a78bfa">💳 חלקי ({pItems.length}/{Object.keys(getPayments(b, calc.lines, unit.rent, month)).length})</Badge>
                               : <Badge color="#e85c4a">⏳ ממתין לתשלום</Badge>;
                           })()
                       }
@@ -1611,7 +1631,7 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
                     <div style={{background:"#1a1a2e",border:"1px solid #e8c54766",borderRadius:8,padding:"8px 14px",fontSize:12,minWidth:120}}>
                       <div style={{color:"#888",marginBottom:2}}>סה״כ לתשלום</div>
                       {(()=>{
-                        const fullTotal = b.locked&&b.lockedAmount!=null ? b.lockedAmount : unit.rent+calc.total;
+                        const fullTotal = b.locked&&b.lockedAmount!=null ? b.lockedAmount : unit.rent*2+calc.total;
                         // Sum already paid amounts from payments object
                         const paidSoFar = b.payments
                           ? Object.values(b.payments).reduce((s,p)=>s+(p?.paid&&p?.amount?+p.amount:0),0)
