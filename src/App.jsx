@@ -158,8 +158,8 @@ const calcBill = (readings, tariffs, unit, units, buildingBill, bills, periodKey
       let fixedShare=0;
       const fc = bb?.fixedCostTotal || t.fixedCostTotal || 0;
       const splitMethod = bb?.fixedSplitMethod || t.fixedSplitMethod || "equal";
-      // Only active (non-vacant) units share fixed costs
-      const activeUnits = units ? units.filter(u=>!u.vacant) : units;
+      // ALL units share fixed costs equally (including vacant — they still consume standby power)
+      const activeUnits = units || [];
       const nActive = activeUnits?.length || 1;
       if(fc>0 && nActive>0){
         if(splitMethod==="byUsage" && bills && periodKey){
@@ -169,7 +169,7 @@ const calcBill = (readings, tariffs, unit, units, buildingBill, bills, periodKey
           },0);
           fixedShare = totalKwh>0 ? fc*(unitKwh/totalKwh) : fc/nActive;
         } else {
-          fixedShare = unit?.vacant ? 0 : fc/nActive;
+          fixedShare = fc/nActive;
         }
       }
 
@@ -783,7 +783,7 @@ function TariffEditor({tariffs, save, unitsCount=1}){
             </div>
             {(t.electricity.fixedCostTotal||0)>0&&(
               <div style={{marginTop:8,fontSize:11,color:"#888"}}>
-                חלק לדירה (חלוקה שווה): {fmt((t.electricity.fixedCostTotal||0)/Math.max(1,unitsCount))} · {unitsCount} דירות פעילות
+                חלק לדירה (חלוקה שווה): {fmt((t.electricity.fixedCostTotal||0)/Math.max(1,unitsCount))} · {unitsCount} דירות (כולל ריקות)
               </div>
             )}
           </div>
@@ -1509,7 +1509,7 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
       </>
       }
       {unitFilter==null&&<>
-      <TariffEditor tariffs={tariffs} save={save} unitsCount={units.filter(u=>!u.vacant).length}/>
+      <TariffEditor tariffs={tariffs} save={save} unitsCount={units.length}/>
       <Card style={{marginBottom:16}}>
         <div style={{fontWeight:700,color:"#e8c547",marginBottom:12}}>➕ הוסף חשבון חדש</div>
         <AddBillForm units={units} bills={bills} onAdd={addBill}/>
