@@ -112,6 +112,17 @@ export function useAuth() {
     return true
   }
 
+  const signInWithGoogle = async () => {
+    if(IS_CLAUDE || !SUPABASE_URL){ return false }
+    const sb = getSupabase()
+    const { error } = await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: { redirectTo: window.location.origin }
+    })
+    if(error){ setError('שגיאה בכניסה עם Google'); return false }
+    return true
+  }
+
   const signOut = async () => {
     await getSupabase().auth.signOut()
     setSession(null)
@@ -127,6 +138,7 @@ export function useAuth() {
     error,
     sendMagicLink,
     signInWithPassword,
+    signInWithGoogle,
     signOut,
     isLoading: session === undefined,
     isLoggedIn: !!session,
