@@ -243,6 +243,31 @@ const getItemLabels = (periodKey) => {
 };
 
 
+
+// ─── SUPABASE STORAGE HELPERS ─────────────────────────────────────────────────
+
+const uploadFile = async (bucket, path, file) => {
+  const sb = window._supabaseClient;
+  if(!sb) return null;
+  const { data, error } = await sb.storage.from(bucket).upload(path, file, { upsert: true });
+  if(error){ console.error('Upload error:', error); return null; }
+  const { data: urlData } = sb.storage.from(bucket).getPublicUrl(path);
+  return urlData?.publicUrl || null;
+};
+
+const deleteFile = async (bucket, path) => {
+  const sb = window._supabaseClient;
+  if(!sb) return;
+  await sb.storage.from(bucket).remove([path]);
+};
+
+const getFileUrl = (bucket, path) => {
+  const sb = window._supabaseClient;
+  if(!sb || !path) return null;
+  const { data } = sb.storage.from(bucket).getPublicUrl(path);
+  return data?.publicUrl || null;
+};
+
 const bKey=(uid,month)=>`${uid}_${month}`;
 
 // ─── SEWAGE AUTO-CALC (מטה יהודה מנגנון חורף/קיץ) ───────────────────────────
@@ -1245,6 +1270,176 @@ function PaymentItemsModal({bill, calc, unit, monthKey, onSave, onClose}){
           <button onClick={onClose} style={S.btn("#2a2a4a","#888")}>ביטול</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+
+// ─── DOCUMENTS TAB ────────────────────────────────────────────────────────────
+
+function FileUploadRow({label, icon, bucket, unitId, fileKey, files, onUpload, onDelete, color="#6bc5f8", extraFields=null}){
+  const [uploading, setUploading] = useState(false);
+  const fileData = files[fileKey] || {};
+
+  const handleUpload = async (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    setUploading(true);
+    const path = `unit_${unitId}/${fileKey}_${Date.now()}_${file.name}`;
+    const url = await uploadFile(bucket, path, file);
+    if(url) onUpload(fileKey, {url, path, name:file.name, uploadedAt:new Date().toLocaleDateString("en-CA"), ...extraFields});
+    setUploading(false);
+  };
+
+  return(
+    <div style={{background:"#0e0e20",borderRadius:10,padding:14,marginBottom:10,border:`1px solid ${fileData.url?"#2a4a2a":"#2a2a4a"}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:fileData.url?10:0}}>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:18}}>{icon}</span>
+          <span style={{color:fileData.url?color:"#888",fontWeight:700,fontSize:14}}>{label}</span>
+          {fileData.url&&<span style={{color:"#4caf88",fontSize:11}}>✓ קיים</span>}
+        </div>
+        <div style={{display:"flex",gap:8}}>
+          {fileData.url&&<a href={fileData.url} target="_blank" rel="noreferrer" style={{...S.btn("#1a2a3a",color),fontSize:11,textDecoration:"none",padding:"4px 10px",borderRadius:6}}>📥 פתח</a>}
+          <label style={{...S.btn("#1a3a1a","#4caf88"),fontSize:11,cursor:"pointer",padding:"4px 10px",borderRadius:6}}>
+            {uploading?"⏳ מעלה...":fileData.url?"🔄 החלף":"📤 העלה"}
+            <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={handleUpload} style={{display:"none"}} disabled={uploading}/>
+          </label>
+          {fileData.url&&<button onClick={()=>onDelete(fileKey)} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:14}}>🗑</button>}
+        </div>
+      </div>
+      {fileData.url&&(
+        <div style={{fontSize:11,color:"#555"}}>
+          {fileData.name} · הועלה: {fileData.uploadedAt}
+          {fileData.expiryDate&&<span style={{marginRight:8,color:isExpiringSoon(fileData.expiryDate)?"#e85c4a":"#888"}}> · פוקע: {fileData.expiryDate}{isExpiringSoon(fileData.expiryDate)&&" ⚠️"}</span>}
+        </div>
+      )}
+      {extraFields!==null&&fileData.url&&(
+        <div style={{marginTop:8}}>
+          <label style={{...S.lbl,fontSize:11}}>תאריך פקיעה
+            <input type="date" value={fileData.expiryDate||""} onChange={e=>onUpload(fileKey,{...fileData,expiryDate:e.target.value})} style={{...S.inp,fontSize:11}}/>
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const isExpiringSoon = (dateStr, days=30) => {
+  if(!dateStr) return false;
+  const diff = (new Date(dateStr) - new Date()) / (1000*60*60*24);
+  return diff >= 0 && diff <= days;
+};
+
+function DocumentsTab({data, save}){
+  const {units} = data;
+  const [selUnit, setSelUnit] = useState(units[0]?.id||null);
+  const unit = units.find(u=>u.id===selUnit);
+
+  const files = unit?.files || {};
+
+  const handleUpload = (fileKey, fileData) => {
+    save(d=>({...d, units:d.units.map(u=>u.id===selUnit?{...u,files:{...u.files,[fileKey]:fileData}}:u)}));
+  };
+
+  const handleDelete = async (fileKey) => {
+    const f = files[fileKey];
+    if(f?.path) await deleteFile(f.bucket||"contracts", f.path);
+    save(d=>({...d, units:d.units.map(u=>u.id===selUnit?{...u,files:{...u.files,[fileKey]:null}}:u)}));
+  };
+
+  if(!unit) return <div style={{color:"#888",padding:20}}>אין יחידות</div>;
+
+  return(
+    <div>
+      {/* Unit selector */}
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+        {units.map(u=>(
+          <button key={u.id} onClick={()=>setSelUnit(u.id)}
+            style={{...S.btn(selUnit===u.id?"#1a2a3a":"#0e0e20",selUnit===u.id?"#6bc5f8":"#555"),border:`1px solid ${selUnit===u.id?"#6bc5f8":"#2a2a4a"}`}}>
+            {u.name}
+          </button>
+        ))}
+      </div>
+
+      <Card>
+        <div style={{fontWeight:800,color:"#6bc5f8",marginBottom:16,fontSize:15}}>📁 מסמכים — {unit.name}</div>
+
+        <FileUploadRow label="חוזה שכירות" icon="📝" bucket="contracts" unitId={selUnit}
+          fileKey="contract" files={files} onUpload={handleUpload} onDelete={handleDelete}
+          color="#e8c547" extraFields={{expiryDate:""}}/>
+
+        <FileUploadRow label="ערבות בנקאית" icon="🏦" bucket="guarantees" unitId={selUnit}
+          fileKey="guarantee" files={files} onUpload={handleUpload} onDelete={handleDelete}
+          color="#a78bfa" extraFields={{expiryDate:""}}/>
+
+        <FileUploadRow label="ערבות בנקאית נוספת" icon="🏦" bucket="guarantees" unitId={selUnit}
+          fileKey="guarantee2" files={files} onUpload={handleUpload} onDelete={handleDelete}
+          color="#a78bfa" extraFields={{expiryDate:""}}/>
+
+        <FileUploadRow label="תמונות מונה מים" icon="💧" bucket="bills-uploads" unitId={selUnit}
+          fileKey="waterMeter" files={files} onUpload={handleUpload} onDelete={handleDelete}
+          color="#6bc5f8"/>
+
+        <FileUploadRow label="חשבון חשמל אחרון" icon="⚡" bucket="bills-uploads" unitId={selUnit}
+          fileKey="electricBill" files={files} onUpload={handleUpload} onDelete={handleDelete}
+          color="#e8c547"/>
+      </Card>
+    </div>
+  );
+}
+
+// ─── ALERTS BAR ───────────────────────────────────────────────────────────────
+
+function AlertsBar({data}){
+  const {units} = data;
+  const alerts = [];
+  const today = new Date();
+
+  // Check guarantees expiry
+  for(const unit of units){
+    const files = unit.files || {};
+    for(const [key, f] of Object.entries(files)){
+      if(!f?.expiryDate) continue;
+      const diff = (new Date(f.expiryDate) - today) / (1000*60*60*24);
+      if(diff >= 0 && diff <= 60){
+        const label = key==="guarantee"?"ערבות בנקאית":key==="guarantee2"?"ערבות בנקאית נוספת":"חוזה";
+        alerts.push({
+          type:"expiry",
+          msg:`⚠️ ${unit.name}: ${label} פוקע ב-${f.expiryDate} (עוד ${Math.ceil(diff)} ימים)`,
+          color: diff<=14?"#e85c4a":"#e8c547"
+        });
+      }
+    }
+  }
+
+  // Check meter reading reminders
+  // Current period end = find current period and check if we're within 7 days of end
+  const now = new Date();
+  const currentMonth = now.getMonth()+1;
+  const currentYear = now.getFullYear();
+  // Periods end on odd months (מרץ, מאי, יולי, ספטמבר, נובמבר, ינואר)
+  const periodEndMonths = [1,3,5,7,9,11];
+  const nextEndMonth = periodEndMonths.find(m => m > currentMonth) || (periodEndMonths[0] + 12);
+  const endDate = new Date(currentYear + (nextEndMonth>12?1:0), (nextEndMonth>12?nextEndMonth-12:nextEndMonth)-1, 1);
+  const daysToEnd = (endDate - now) / (1000*60*60*24);
+  if(daysToEnd <= 7){
+    alerts.push({
+      type:"meter",
+      msg:`📷 תזכורת: צלם מוני מים וחשמל — סוף התקופה בעוד ${Math.ceil(daysToEnd)} ימים`,
+      color:"#6bc5f8"
+    });
+  }
+
+  if(alerts.length===0) return null;
+
+  return(
+    <div style={{margin:"0 0 16px 0",display:"flex",flexDirection:"column",gap:8}}>
+      {alerts.map((a,i)=>(
+        <div key={i} style={{background:a.color+"22",border:`1px solid ${a.color}44`,borderRadius:8,padding:"10px 14px",color:a.color,fontSize:13,fontWeight:600}}>
+          {a.msg}
+        </div>
+      ))}
     </div>
   );
 }
@@ -2526,6 +2721,7 @@ export default function App(){
       {id:"finance",  label:"הכנסות והוצאות", icon:"💰"},
       {id:"units",    label:"יחידות דיור",     icon:"🏠"},
       {id:"reports",  label:"דוחות",           icon:"📈"},
+      {id:"docs",     label:"מסמכים",           icon:"📁"},
       {id:"excel",    label:"Excel",            icon:"📊"},
     ]:[]),
   ];
@@ -2564,6 +2760,7 @@ export default function App(){
       </div>
 
       <SyncBar syncOk={syncOk} lastSync={lastSync} isClaudeEnv={isClaudeEnv}/>
+      <AlertsBar data={data}/>
 
       <div style={{background:"#0e0e22",borderBottom:"1px solid #1e1e3a",display:"flex",overflowX:"auto",padding:"0 16px"}}>
         {tabs.map(t=><NavTab key={t.id} {...t} active={tab===t.id} onClick={()=>setTab(t.id)}/>)}
@@ -2576,6 +2773,7 @@ export default function App(){
         {tab==="units"    &&!isUnitViewer(userRole)&&<UnitsTab     data={data} save={save} readonly={readonly}/>}
         {tab==="reports"  &&!isUnitViewer(userRole)&&<ReportsTab   data={data} unitFilter={null}/>}
         {tab==="excel"    &&!isUnitViewer(userRole)&&<ExcelPanel   data={data} save={save}/>}
+        {tab==="docs"     &&!isUnitViewer(userRole)&&<DocumentsTab  data={data} save={save}/>}
       </div>
     </div>
   );

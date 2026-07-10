@@ -14,6 +14,8 @@ const IS_CLAUDE = typeof window !== "undefined" && typeof window.storage === "ob
 let _sb = null
 export const getSupabase = () => {
   if (!_sb) _sb = createClient(SUPABASE_URL, SUPABASE_ANON)
+  // Expose globally for Storage helpers in App.jsx
+  if(typeof window !== 'undefined') window._supabaseClient = _sb;
   return _sb
 }
 
