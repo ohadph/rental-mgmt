@@ -1278,6 +1278,148 @@ function PaymentItemsModal({bill, calc, unit, monthKey, onSave, onClose}){
 
 // ─── DOCUMENTS TAB ────────────────────────────────────────────────────────────
 
+function RemindersTab({data, save}){
+  const units = data.units || [];
+  const reminders = data.reminders || [];
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({title:"", date:"", unitId:"", type:"general"});
+
+  const today = new Date().toLocaleDateString("en-CA");
+
+  const addReminder = () => {
+    if(!form.title||!form.date) return;
+    save(d=>({...d, reminders:[...(d.reminders||[]), {id:Date.now(), ...form, done:false, createdAt:today}]}));
+    setForm({title:"", date:"", unitId:"", type:"general"});
+    setShowAdd(false);
+  };
+
+  const toggleDone = (id) => save(d=>({...d, reminders:(d.reminders||[]).map(r=>r.id===id?{...r,done:!r.done}:r)}));
+  const deleteReminder = (id) => save(d=>({...d, reminders:(d.reminders||[]).filter(r=>r.id!==id)}));
+
+  // Auto alerts from file expiry dates
+  const autoAlerts = [];
+  const fileLabels = {contract:"חוזה שכירות", contractRenewal:"הארכת חוזה", guarantee:"ערבות בנקאית", guarantee2:"ערבות בנקאית נוספת"};
+  for(const unit of units){
+    const files = unit.files || {};
+    for(const [key, label] of Object.entries(fileLabels)){
+      const f = files[key];
+      if(!f?.expiryDate) continue;
+      const diff = Math.ceil((new Date(f.expiryDate) - new Date()) / (1000*60*60*24));
+      if(diff >= -30 && diff <= 90){
+        autoAlerts.push({
+          id:`auto_${unit.id}_${key}`,
+          title:`${label} — ${unit.name}`,
+          date: f.expiryDate,
+          diff,
+          color: diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"
+        });
+      }
+    }
+  }
+
+  // Meter reading reminder — 7 days before period end
+  const now = new Date();
+  const currentMonth = now.getMonth()+1;
+  const periodEndMonths = [1,3,5,7,9,11];
+  const nextEndMonth = periodEndMonths.find(m=>m>currentMonth)||(periodEndMonths[0]+12);
+  const endYear = now.getFullYear()+(nextEndMonth>12?1:0);
+  const endDate = new Date(endYear, (nextEndMonth>12?nextEndMonth-12:nextEndMonth)-1, 1);
+  const daysToEnd = Math.ceil((endDate-now)/(1000*60*60*24));
+  if(daysToEnd<=7){
+    autoAlerts.push({id:"auto_meter", title:"📷 צלם מוני מים וחשמל", date:endDate.toLocaleDateString("en-CA"), diff:daysToEnd, color:"#6bc5f8"});
+  }
+
+  const upcoming = reminders.filter(r=>!r.done).sort((a,b)=>a.date.localeCompare(b.date));
+  const done = reminders.filter(r=>r.done);
+  const TYPES = {general:"כללי", expiry:"פקיעה", meter:"מוני", payment:"תשלום"};
+  const TYPE_ICONS = {general:"🔔", expiry:"⏰", meter:"📷", payment:"💰"};
+
+  return(
+    <div>
+      {autoAlerts.length>0&&(
+        <Card style={{marginBottom:16,background:"#0e0e20"}}>
+          <div style={{fontWeight:800,color:"#e8c547",marginBottom:12}}>⚠️ התראות אוטומטיות</div>
+          {autoAlerts.map(a=>(
+            <div key={a.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 0",borderBottom:"1px solid #1a1a2e"}}>
+              <div>
+                <div style={{color:a.color,fontWeight:700,fontSize:13}}>{a.title}</div>
+                <div style={{color:"#555",fontSize:11}}>{a.date} · {a.diff<0?`פג לפני ${-a.diff} ימים`:a.diff===0?"היום":`עוד ${a.diff} ימים`}</div>
+              </div>
+              <div style={{fontSize:20}}>{a.diff<0?"🔴":a.diff<=14?"🟠":"🟡"}</div>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      <Card style={{marginBottom:16}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontWeight:800,color:"#6bc5f8"}}>🔔 תזכורות ({upcoming.length})</div>
+          <button onClick={()=>setShowAdd(v=>!v)} style={S.btn("#1a2a3a","#6bc5f8")}>+ הוסף</button>
+        </div>
+
+        {showAdd&&(
+          <div style={{background:"#0e0e20",borderRadius:10,padding:14,marginBottom:12}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+              <label style={{...S.lbl,gridColumn:"1/-1"}}>כותרת
+                <input value={form.title} onChange={e=>setForm(p=>({...p,title:e.target.value}))} style={S.inp} placeholder="תיאור התזכורת"/>
+              </label>
+              <label style={S.lbl}>תאריך
+                <input type="date" value={form.date} onChange={e=>setForm(p=>({...p,date:e.target.value}))} style={S.inp}/>
+              </label>
+              <label style={S.lbl}>יחידה
+                <select value={form.unitId} onChange={e=>setForm(p=>({...p,unitId:e.target.value}))} style={S.inp}>
+                  <option value="">כללי</option>
+                  {units.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </label>
+              <label style={S.lbl}>סוג
+                <select value={form.type} onChange={e=>setForm(p=>({...p,type:e.target.value}))} style={S.inp}>
+                  {Object.entries(TYPES).map(([k,v])=><option key={k} value={k}>{v}</option>)}
+                </select>
+              </label>
+            </div>
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={addReminder} disabled={!form.title||!form.date} style={{...S.btn("#e8c547","#1a1a2e"),flex:1,opacity:(!form.title||!form.date)?0.4:1}}>💾 שמור</button>
+              <button onClick={()=>setShowAdd(false)} style={S.btn("#2a2a4a","#888")}>ביטול</button>
+            </div>
+          </div>
+        )}
+
+        {upcoming.length===0&&!showAdd&&<div style={{color:"#555",fontSize:13,textAlign:"center",padding:12}}>אין תזכורות פעילות</div>}
+
+        {upcoming.map(r=>{
+          const diff = Math.ceil((new Date(r.date)-new Date())/(1000*60*60*24));
+          const color = diff<0?"#e85c4a":diff<=3?"#e85c4a":diff<=7?"#e8c547":"#aaa";
+          const unit = units.find(u=>u.id===+r.unitId);
+          return(
+            <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:"1px solid #1a1a2e"}}>
+              <button onClick={()=>toggleDone(r.id)} style={{width:22,height:22,borderRadius:6,background:"transparent",border:`2px solid ${color}`,cursor:"pointer",flexShrink:0}}/>
+              <div style={{flex:1}}>
+                <div style={{color:"#ddd",fontWeight:600,fontSize:13}}>{TYPE_ICONS[r.type]||"🔔"} {r.title}</div>
+                <div style={{color,fontSize:11}}>{r.date}{unit?` · ${unit.name}`:""} · {diff<0?`באיחור של ${-diff} ימים`:diff===0?"היום":`עוד ${diff} ימים`}</div>
+              </div>
+              <button onClick={()=>deleteReminder(r.id)} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:14}}>🗑</button>
+            </div>
+          );
+        })}
+      </Card>
+
+      {done.length>0&&(
+        <Card>
+          <div style={{fontWeight:700,color:"#555",marginBottom:8,fontSize:13}}>✓ בוצע ({done.length})</div>
+          {done.map(r=>(
+            <div key={r.id} style={{display:"flex",alignItems:"center",gap:10,padding:"6px 0",borderBottom:"1px solid #1a1a2e",opacity:0.5}}>
+              <button onClick={()=>toggleDone(r.id)} style={{width:22,height:22,borderRadius:6,background:"#4caf88",border:"none",cursor:"pointer",flexShrink:0,color:"#1a1a2e",fontWeight:900,fontSize:12}}>✓</button>
+              <div style={{flex:1,color:"#555",fontSize:13,textDecoration:"line-through"}}>{r.title}</div>
+              <button onClick={()=>deleteReminder(r.id)} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:14}}>🗑</button>
+            </div>
+          ))}
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function FileUploadRow({label, icon, bucket, unitId, fileKey, files, onUpload, onDelete, color="#6bc5f8", extraFields=null}){
   const [uploading, setUploading] = useState(false);
   const fileData = files[fileKey] || {};
