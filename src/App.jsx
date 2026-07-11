@@ -1296,21 +1296,24 @@ function RemindersTab({data, save}){
   const toggleDone = (id) => save(d=>({...d, reminders:(d.reminders||[]).map(r=>r.id===id?{...r,done:!r.done}:r)}));
   const deleteReminder = (id) => save(d=>({...d, reminders:(d.reminders||[]).filter(r=>r.id!==id)}));
 
-  // Auto alerts from file expiry dates
+  // Auto alerts — drawn from unit fields
   const autoAlerts = [];
-  const fileLabels = {contract:"חוזה שכירות", contractRenewal:"הארכת חוזה", guarantee:"ערבות בנקאית", guarantee2:"ערבות בנקאית נוספת"};
   for(const unit of units){
-    const files = unit.files || {};
-    for(const [key, label] of Object.entries(fileLabels)){
-      const f = files[key];
-      if(!f?.expiryDate) continue;
-      const diff = Math.ceil((new Date(f.expiryDate) - new Date()) / (1000*60*60*24));
-      if(diff >= -30 && diff <= 90){
+    const checks = [
+      {key:"contract",  label:"חוזה שכירות",       endField:unit.contractEnd,   alertDays:unit.contractAlertDays||60},
+      {key:"guarantee", label:"ערבות בנקאית 1",     endField:unit.guaranteeEnd,  alertDays:unit.guaranteeAlertDays||30},
+      {key:"guarantee2",label:"ערבות בנקאית 2",     endField:unit.guarantee2End, alertDays:unit.guarantee2AlertDays||30},
+    ];
+    for(const c of checks){
+      if(!c.endField) continue;
+      const diff = Math.ceil((new Date(c.endField) - new Date()) / (1000*60*60*24));
+      if(diff <= c.alertDays){
         autoAlerts.push({
-          id:`auto_${unit.id}_${key}`,
-          title:`${label} — ${unit.name}`,
-          date: f.expiryDate,
+          id:`auto_${unit.id}_${c.key}`,
+          title:`${c.label} — ${unit.name}`,
+          date: c.endField,
           diff,
+          alertDays: c.alertDays,
           color: diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"
         });
       }
@@ -1326,7 +1329,7 @@ function RemindersTab({data, save}){
   const endDate = new Date(endYear, (nextEndMonth>12?nextEndMonth-12:nextEndMonth)-1, 1);
   const daysToEnd = Math.ceil((endDate-now)/(1000*60*60*24));
   if(daysToEnd<=7){
-    autoAlerts.push({id:"auto_meter", title:"📷 צלם מוני מים וחשמל", date:endDate.toLocaleDateString("en-CA"), diff:daysToEnd, color:"#6bc5f8"});
+    autoAlerts.push({id:"auto_meter", title:"📷 צלם מוני מים וחשמל — סוף התקופה", date:endDate.toLocaleDateString("en-CA"), diff:daysToEnd, color:"#6bc5f8"});
   }
 
   const upcoming = reminders.filter(r=>!r.done).sort((a,b)=>a.date.localeCompare(b.date));
@@ -1547,17 +1550,20 @@ function AlertsBar({data}){
   const alerts = [];
   const today = new Date();
 
-  // Check guarantees expiry
+  // Check contract/guarantee expiry from unit fields
   for(const unit of units){
-    const files = unit.files || {};
-    for(const [key, f] of Object.entries(files)){
-      if(!f?.expiryDate) continue;
-      const diff = (new Date(f.expiryDate) - today) / (1000*60*60*24);
-      if(diff >= 0 && diff <= 60){
-        const label = key==="guarantee"?"ערבות בנקאית":key==="guarantee2"?"ערבות בנקאית נוספת":"חוזה";
+    const checks = [
+      {label:"חוזה שכירות",   end:unit.contractEnd,   days:unit.contractAlertDays||60},
+      {label:"ערבות בנקאית 1",end:unit.guaranteeEnd,  days:unit.guaranteeAlertDays||30},
+      {label:"ערבות בנקאית 2",end:unit.guarantee2End, days:unit.guarantee2AlertDays||30},
+    ];
+    for(const c of checks){
+      if(!c.end) continue;
+      const diff = (new Date(c.end) - today) / (1000*60*60*24);
+      if(diff <= c.days){
         alerts.push({
           type:"expiry",
-          msg:`⚠️ ${unit.name}: ${label} פוקע ב-${f.expiryDate} (עוד ${Math.ceil(diff)} ימים)`,
+          msg:`⚠️ ${unit.name}: ${c.label} פוקע ב-${c.end} (${diff<0?`פג לפני ${Math.ceil(-diff)} ימים`:`עוד ${Math.ceil(diff)} ימים`})`,
           color: diff<=14?"#e85c4a":"#e8c547"
         });
       }
@@ -2240,7 +2246,7 @@ function UnitsTab({data,save,readonly=false}){
     setUnitForm({name:u.name,rent:u.rent,persons:u.persons||1,waterMeterId:u.waterMeterId||"",electricMeterId:u.electricMeterId||""});
   };
   const saveUnit=()=>{
-    save(d=>({...d,units:d.units.map(u=>u.id===editingUnit?{...u,...unitForm,rent:+unitForm.rent,persons:+unitForm.persons,arnonaAmount:+unitForm.arnonaAmount||0}:u)}));
+    save(d=>({...d,units:d.units.map(u=>u.id===editingUnit?{...u,...unitForm,rent:+unitForm.rent,persons:+unitForm.persons,arnonaAmount:+unitForm.arnonaAmount||0,contractAlertDays:+unitForm.contractAlertDays||60,guaranteeAlertDays:+unitForm.guaranteeAlertDays||30,guarantee2AlertDays:+unitForm.guarantee2AlertDays||30}:u)}));
     setEditingUnit(null);
   };
 
@@ -2395,6 +2401,17 @@ function UnitsTab({data,save,readonly=false}){
                   <label style={S.lbl}>שכירות (₪)<input type="number" value={unitForm.rent} onChange={e=>setUnitForm(p=>({...p,rent:e.target.value}))} style={S.inp}/></label>
                   <label style={S.lbl}>מספר נפשות<input type="number" min="1" max="20" value={unitForm.persons} onChange={e=>setUnitForm(p=>({...p,persons:e.target.value}))} style={S.inp}/></label>
                   <label style={S.lbl}>ארנונה + מיסי מושב (₪/חודש) — 0 אם כלול בשכירות<input type="number" min="0" value={unitForm.arnonaAmount||0} onChange={e=>setUnitForm(p=>({...p,arnonaAmount:e.target.value}))} style={S.inp}/></label>
+                  <div style={{borderTop:"1px solid #2a2a4a",paddingTop:10,marginTop:4}}>
+                    <div style={{color:"#a78bfa",fontSize:12,fontWeight:700,marginBottom:8}}>📋 חוזה וערבויות</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                      <label style={S.lbl}>תאריך סיום חוזה<input type="date" value={unitForm.contractEnd||""} onChange={e=>setUnitForm(p=>({...p,contractEnd:e.target.value}))} style={S.inp}/></label>
+                      <label style={S.lbl}>התראה (ימים לפני)<input type="number" min="1" value={unitForm.contractAlertDays||60} onChange={e=>setUnitForm(p=>({...p,contractAlertDays:e.target.value}))} style={S.inp}/></label>
+                      <label style={S.lbl}>תאריך סיום ערבות 1<input type="date" value={unitForm.guaranteeEnd||""} onChange={e=>setUnitForm(p=>({...p,guaranteeEnd:e.target.value}))} style={S.inp}/></label>
+                      <label style={S.lbl}>התראה (ימים לפני)<input type="number" min="1" value={unitForm.guaranteeAlertDays||30} onChange={e=>setUnitForm(p=>({...p,guaranteeAlertDays:e.target.value}))} style={S.inp}/></label>
+                      <label style={S.lbl}>תאריך סיום ערבות 2<input type="date" value={unitForm.guarantee2End||""} onChange={e=>setUnitForm(p=>({...p,guarantee2End:e.target.value}))} style={S.inp}/></label>
+                      <label style={S.lbl}>התראה (ימים לפני)<input type="number" min="1" value={unitForm.guarantee2AlertDays||30} onChange={e=>setUnitForm(p=>({...p,guarantee2AlertDays:e.target.value}))} style={S.inp}/></label>
+                    </div>
+                  </div>
                   <label style={S.lbl}>💧 מספר מונה מים<input value={unitForm.waterMeterId} onChange={e=>setUnitForm(p=>({...p,waterMeterId:e.target.value}))} style={S.inp} placeholder="12345678"/></label>
                   <label style={S.lbl}>⚡ מספר מונה חשמל<input value={unitForm.electricMeterId} onChange={e=>setUnitForm(p=>({...p,electricMeterId:e.target.value}))} style={S.inp} placeholder="87654321"/></label>
                   <div style={{display:"flex",gap:8,marginTop:12}}>
@@ -2439,6 +2456,8 @@ function UnitsTab({data,save,readonly=false}){
                       <span style={{color:"#666",fontSize:12}}>ארנונה + מיסי מושב</span>
                       <span style={{color:"#e8c547",fontSize:12,fontWeight:700}}>{fmt(u.arnonaAmount)}</span>
                     </div>}
+                    {u.contractEnd&&<div style={{fontSize:11,color:isExpiringSoon(u.contractEnd,u.contractAlertDays||60)?"#e85c4a":"#555",marginTop:4}}>📋 חוזה עד: {u.contractEnd}{isExpiringSoon(u.contractEnd,u.contractAlertDays||60)&&" ⚠️"}</div>}
+                    {u.guaranteeEnd&&<div style={{fontSize:11,color:isExpiringSoon(u.guaranteeEnd,u.guaranteeAlertDays||30)?"#e85c4a":"#555",marginTop:2}}>🏦 ערבות עד: {u.guaranteeEnd}{isExpiringSoon(u.guaranteeEnd,u.guaranteeAlertDays||30)&&" ⚠️"}</div>}
                   </div>
 
                   {/* Actions — hidden for viewers */}
