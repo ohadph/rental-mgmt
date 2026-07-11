@@ -35,6 +35,7 @@ const DEFAULT_DATA = {
     { id:6, date:"2025-02-10", type:"expense", category:"ביטוח",  unitId:null, amount:1200, note:"ביטוח רכוש" },
   ],
   buildingBills: {},   // { 'YYYY-MM': { periods:[{kwh,price,dateFrom,dateTo}], fixedCostTotal, fixedSplitMethod, date } }
+  reminders: [],
   tariffs: {
     water: {
       name:"מים", unit:"מ״ק", tiered:true,
@@ -1369,6 +1370,10 @@ function DocumentsTab({data, save}){
           fileKey="contract" files={files} onUpload={handleUpload} onDelete={handleDelete}
           color="#e8c547" extraFields={{expiryDate:""}}/>
 
+        <FileUploadRow label="הארכת חוזה שכירות" icon="📋" bucket="contracts" unitId={selUnit}
+          fileKey="contractRenewal" files={files} onUpload={handleUpload} onDelete={handleDelete}
+          color="#e8c547" extraFields={{expiryDate:""}}/>
+
         <FileUploadRow label="ערבות בנקאית" icon="🏦" bucket="guarantees" unitId={selUnit}
           fileKey="guarantee" files={files} onUpload={handleUpload} onDelete={handleDelete}
           color="#a78bfa" extraFields={{expiryDate:""}}/>
@@ -1377,11 +1382,15 @@ function DocumentsTab({data, save}){
           fileKey="guarantee2" files={files} onUpload={handleUpload} onDelete={handleDelete}
           color="#a78bfa" extraFields={{expiryDate:""}}/>
 
-        <FileUploadRow label="תמונות מונה מים" icon="💧" bucket="bills-uploads" unitId={selUnit}
+        <FileUploadRow label="תמונת מונה מים" icon="💧" bucket="bills-uploads" unitId={selUnit}
           fileKey="waterMeter" files={files} onUpload={handleUpload} onDelete={handleDelete}
           color="#6bc5f8"/>
 
-        <FileUploadRow label="חשבון חשמל אחרון" icon="⚡" bucket="bills-uploads" unitId={selUnit}
+        <FileUploadRow label="תמונת מונה חשמל" icon="⚡" bucket="bills-uploads" unitId={selUnit}
+          fileKey="electricMeter" files={files} onUpload={handleUpload} onDelete={handleDelete}
+          color="#e8c547"/>
+
+        <FileUploadRow label="חשבון חשמל אחרון" icon="🧾" bucket="bills-uploads" unitId={selUnit}
           fileKey="electricBill" files={files} onUpload={handleUpload} onDelete={handleDelete}
           color="#e8c547"/>
       </Card>
@@ -2721,6 +2730,7 @@ export default function App(){
       {id:"finance",  label:"הכנסות והוצאות", icon:"💰"},
       {id:"units",    label:"יחידות דיור",     icon:"🏠"},
       {id:"reports",  label:"דוחות",           icon:"📈"},
+      {id:"reminders",label:"תזכורות",           icon:"🔔"},
       {id:"docs",     label:"מסמכים",           icon:"📁"},
       {id:"excel",    label:"Excel",            icon:"📊"},
     ]:[]),
@@ -2774,6 +2784,7 @@ export default function App(){
         {tab==="reports"  &&!isUnitViewer(userRole)&&<ReportsTab   data={data} unitFilter={null}/>}
         {tab==="excel"    &&!isUnitViewer(userRole)&&<ExcelPanel   data={data} save={save}/>}
         {tab==="docs"     &&!isUnitViewer(userRole)&&<DocumentsTab  data={data} save={save}/>}
+        {tab==="reminders"&&!isUnitViewer(userRole)&&<RemindersTab  data={data} save={save}/>}
       </div>
     </div>
   );
