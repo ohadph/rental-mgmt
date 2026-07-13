@@ -1342,16 +1342,25 @@ function RemindersTab({data, save}){
     }
   }
 
-  // Meter reading reminder — 7 days before period end
+  // Meter reading reminder — show next 2 period ends
   const now = new Date();
   const currentMonth = now.getMonth()+1;
   const periodEndMonths = [1,3,5,7,9,11];
-  const nextEndMonth = periodEndMonths.find(m=>m>currentMonth)||(periodEndMonths[0]+12);
-  const endYear = now.getFullYear()+(nextEndMonth>12?1:0);
-  const endDate = new Date(endYear, (nextEndMonth>12?nextEndMonth-12:nextEndMonth)-1, 1);
-  const daysToEnd = Math.ceil((endDate-now)/(1000*60*60*24));
-  if(daysToEnd<=7){
-    autoAlerts.push({id:"auto_meter", title:"📷 צלם מוני מים וחשמל — סוף התקופה", date:endDate.toLocaleDateString("en-CA"), diff:daysToEnd, color:"#6bc5f8"});
+  for(let i=0; i<2; i++){
+    const futureMonths = [...periodEndMonths, ...periodEndMonths.map(m=>m+12)];
+    const nextEndMonth = futureMonths.find(m=>m>(currentMonth+i*2))||futureMonths[0];
+    const endYear = now.getFullYear()+(nextEndMonth>12?1:0);
+    const endDate = new Date(endYear, (nextEndMonth>12?nextEndMonth-12:nextEndMonth)-1, 1);
+    const daysToEnd = Math.ceil((endDate-now)/(1000*60*60*24));
+    if(daysToEnd<=14&&daysToEnd>=0){
+      autoAlerts.push({
+        id:`auto_meter_${nextEndMonth}`,
+        title:`📷 צלם מוני מים וחשמל — ${endDate.toLocaleDateString("he-IL",{month:"long",year:"numeric"})}`,
+        date:endDate.toLocaleDateString("en-CA"),
+        diff:daysToEnd,
+        color:daysToEnd<=3?"#e85c4a":"#6bc5f8"
+      });
+    }
   }
 
   const upcoming = reminders.filter(r=>!r.done).sort((a,b)=>a.date.localeCompare(b.date));
@@ -2300,7 +2309,14 @@ const migrateToTenancies = (unit) => {
         startDate: active[0].from||"",
         endDate: null,
         tenants: active.map(t=>({id:t.id||Date.now(), name:t.name||"", idNum:t.idNum||"", phone:t.phone||"", email:t.email||""})),
-        contract: null, renewals: [], guarantees: [], notes:""
+        // Preserve old unit-level dates
+        contract:   unit.contractEnd   ? {url:null,path:null,name:"",uploadDate:"",expiryDate:unit.contractEnd}   : null,
+        renewals:   [],
+        guarantees: [
+          ...(unit.guaranteeEnd  ? [{url:null,path:null,name:"",uploadDate:"",expiryDate:unit.guaranteeEnd}]  : []),
+          ...(unit.guarantee2End ? [{url:null,path:null,name:"",uploadDate:"",expiryDate:unit.guarantee2End}] : []),
+        ],
+        notes:""
       });
     }
     if(inactive.length){
@@ -2317,20 +2333,42 @@ const migrateToTenancies = (unit) => {
   }
   // Migrate from old tenantHistory structure
   if(unit.tenantHistory?.length){
-    for(const h of unit.tenantHistory){
+    const sorted = [...unit.tenantHistory].sort((a,b)=>(a.startDate||"").localeCompare(b.startDate||""));
+    for(let i=0; i<sorted.length; i++){
+      const h = sorted[i];
+      const isActive = !h.endDate;
       tenancies.push({
-        id: Date.now()+Math.random(),
-        active: !h.endDate,
+        id: Date.now()+i,
+        active: isActive,
         startDate: h.startDate||"",
         endDate: h.endDate||null,
-        tenants: [{id:Date.now(), name:h.name||"", idNum:"", phone:h.phone||"", email:""}],
-        contract: null, renewals: [], guarantees: [], notes:""
+        tenants: [{id:Date.now()+i, name:h.name||"", idNum:"", phone:h.phone||"", email:""}],
+        contract:   isActive&&unit.contractEnd   ? {url:null,path:null,name:"",uploadDate:"",expiryDate:unit.contractEnd}   : null,
+        renewals:   [],
+        guarantees: isActive ? [
+          ...(unit.guaranteeEnd  ? [{url:null,path:null,name:"",uploadDate:"",expiryDate:unit.guaranteeEnd}]  : []),
+          ...(unit.guarantee2End ? [{url:null,path:null,name:"",uploadDate:"",expiryDate:unit.guarantee2End}] : []),
+        ] : [],
+        notes:""
       });
     }
     return tenancies;
   }
-  // Empty
-  return [{id:Date.now(), active:true, startDate:"", endDate:null, tenants:[{id:Date.now(), name:"", idNum:"", phone:"", email:""}], contract:null, renewals:[], guarantees:[], notes:""}];
+  // Empty unit — no tenants yet
+  return [{
+    id: Date.now(),
+    active: true,
+    startDate: "",
+    endDate: null,
+    tenants: [{id:Date.now(), name:"", idNum:"", phone:"", email:""}],
+    contract:   unit.contractEnd   ? {url:null,path:null,name:"",uploadDate:"",expiryDate:unit.contractEnd}   : null,
+    renewals:   [],
+    guarantees: [
+      ...(unit.guaranteeEnd  ? [{url:null,path:null,name:"",uploadDate:"",expiryDate:unit.guaranteeEnd}]  : []),
+      ...(unit.guarantee2End ? [{url:null,path:null,name:"",uploadDate:"",expiryDate:unit.guarantee2End}] : []),
+    ],
+    notes:""
+  }];
 };
 
 function DocUploadBtn({label, file, bucket, path, onUploaded, onDelete, color="#6bc5f8", showExpiry=false}){
@@ -2511,7 +2549,7 @@ function UnitsTab({data,save,readonly=false}){
 
   const startEditUnit=(u)=>{
     setEditingUnit(u.id);
-    setUnitForm({name:u.name,rent:u.rent,persons:u.persons||1,waterMeterId:u.waterMeterId||"",electricMeterId:u.electricMeterId||""});
+    setUnitForm({name:u.name,rent:u.rent,persons:u.persons||1,arnonaAmount:u.arnonaAmount||0,waterMeterId:u.waterMeterId||'',electricMeterId:u.electricMeterId||'',contractEnd:u.contractEnd||'',contractAlertDays:u.contractAlertDays||60,guaranteeEnd:u.guaranteeEnd||'',guaranteeAlertDays:u.guaranteeAlertDays||30,guarantee2End:u.guarantee2End||'',guarantee2AlertDays:u.guarantee2AlertDays||30});
   };
   const saveUnit=()=>{
     save(d=>({...d,units:d.units.map(u=>u.id===editingUnit?{...u,...unitForm,rent:+unitForm.rent,persons:+unitForm.persons,arnonaAmount:+unitForm.arnonaAmount||0,contractAlertDays:+unitForm.contractAlertDays||60,guaranteeAlertDays:+unitForm.guaranteeAlertDays||30,guarantee2AlertDays:+unitForm.guarantee2AlertDays||30}:u)}));
