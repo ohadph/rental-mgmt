@@ -2109,7 +2109,7 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
                               const file=e.target.files[0]; if(!file) return;
                               const path=`unit_${unit.id}/${month}_${type}_${Date.now()}_${file.name}`;
                               const url=await uploadFile("bills-uploads",path,file);
-                              if(url) save(d=>({...d,bills:{...d.bills,[k]:{...d.bills[k],meterPhotos:{...(d.bills[k].meterPhotos||{}),(type):{url,path,name:file.name,uploadDate:new Date().toLocaleDateString("en-CA")}}}}}));
+                              if(url) save(d=>({...d,bills:{...d.bills,[k]:{...d.bills[k],meterPhotos:{...(d.bills[k].meterPhotos||{}),[type]:{url,path,name:file.name,uploadDate:new Date().toLocaleDateString("en-CA")}}}}}));
                             }}/>
                           </label>
                           {photo&&<a href={photo.url} target="_blank" rel="noreferrer" style={{color:color,fontSize:10}}>פתח</a>}
