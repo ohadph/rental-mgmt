@@ -314,13 +314,18 @@ const calcSewageAuto = (periodKey, unitId, bills, waterUsage, sewageRatePerCubic
 // Get the current active tenant for a unit
 // Supports both old tenantHistory[] and new tenants[] structures
 const currentTenant = (unit) => {
-  // New structure: unit.tenants with active flag
+  // New structure: tenancies[]
+  const activeTenancy = unit.tenancies?.find(t=>t.active);
+  if(activeTenancy?.tenants?.length) {
+    const names = activeTenancy.tenants.map(t=>t.name).filter(Boolean).join(" + ");
+    return {name:names||"ללא שוכר", phone:activeTenancy.tenants[0]?.phone||""};
+  }
+  // unit.tenants[] (previous)
   const newTenants = unit.tenants?.filter(t=>t.active);
   if(newTenants?.length) {
-    const t = newTenants[0];
-    return {name: newTenants.map(t=>t.name).filter(Boolean).join(" + "), phone:t.phone||"", email:t.email||""};
+    return {name: newTenants.map(t=>t.name).filter(Boolean).join(" + "), phone:newTenants[0]?.phone||""};
   }
-  // Old structure: tenantHistory with endDate
+  // Old tenantHistory
   const h = unit.tenantHistory || [];
   const cur = h.find(t => !t.endDate) || h[h.length-1];
   return cur || {name:"ללא שוכר", phone:""};
@@ -1299,23 +1304,39 @@ function RemindersTab({data, save}){
   // Auto alerts — drawn from unit fields
   const autoAlerts = [];
   for(const unit of units){
-    const checks = [
-      {key:"contract",  label:"חוזה שכירות",       endField:unit.contractEnd,   alertDays:unit.contractAlertDays||60},
-      {key:"guarantee", label:"ערבות בנקאית 1",     endField:unit.guaranteeEnd,  alertDays:unit.guaranteeAlertDays||30},
-      {key:"guarantee2",label:"ערבות בנקאית 2",     endField:unit.guarantee2End, alertDays:unit.guarantee2AlertDays||30},
+    // From tenancies structure
+    const activeTenancy = unit.tenancies?.find(t=>t.active);
+    if(activeTenancy){
+      const checks = [
+        {key:"contract", label:"חוזה שכירות", file:activeTenancy.contract, alertDays:unit.contractAlertDays||60},
+        ...(activeTenancy.renewals||[]).map((r,i)=>({key:`renewal_${i}`,label:`הארכת חוזה ${i+1}`,file:r,alertDays:unit.contractAlertDays||60})),
+        ...(activeTenancy.guarantees||[]).map((g,i)=>({key:`guarantee_${i}`,label:`ערבות בנקאית ${i+1}`,file:g,alertDays:unit.guaranteeAlertDays||30})),
+      ];
+      for(const c of checks){
+        if(!c.file?.expiryDate) continue;
+        const diff = Math.ceil((new Date(c.file.expiryDate) - new Date()) / (1000*60*60*24));
+        if(diff <= c.alertDays){
+          autoAlerts.push({
+            id:`auto_${unit.id}_${c.key}`,
+            title:`${c.label} — ${unit.name}`,
+            date:c.file.expiryDate, diff,
+            color: diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"
+          });
+        }
+      }
+    }
+    // Fallback: old unit-level fields
+    const fallbackChecks = [
+      {key:"contractEnd",   label:"חוזה שכירות",   endField:unit.contractEnd,   alertDays:unit.contractAlertDays||60},
+      {key:"guaranteeEnd",  label:"ערבות בנקאית 1", endField:unit.guaranteeEnd,  alertDays:unit.guaranteeAlertDays||30},
+      {key:"guarantee2End", label:"ערבות בנקאית 2", endField:unit.guarantee2End, alertDays:unit.guarantee2AlertDays||30},
     ];
-    for(const c of checks){
+    for(const c of fallbackChecks){
       if(!c.endField) continue;
+      if(autoAlerts.some(a=>a.id.includes(unit.id))) continue; // already have tenancy data
       const diff = Math.ceil((new Date(c.endField) - new Date()) / (1000*60*60*24));
       if(diff <= c.alertDays){
-        autoAlerts.push({
-          id:`auto_${unit.id}_${c.key}`,
-          title:`${c.label} — ${unit.name}`,
-          date: c.endField,
-          diff,
-          alertDays: c.alertDays,
-          color: diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"
-        });
+        autoAlerts.push({id:`auto_${unit.id}_${c.key}`,title:`${c.label} — ${unit.name}`,date:c.endField,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
       }
     }
   }
@@ -1478,28 +1499,26 @@ const isExpiringSoon = (dateStr, days=30) => {
 };
 
 function DocumentsTab({data, save}){
-  const {units} = data;
+  const {units, bills} = data;
   const [selUnit, setSelUnit] = useState(units[0]?.id||null);
   const unit = units.find(u=>u.id===selUnit);
-
-  const files = unit?.files || {};
-
-  const handleUpload = (fileKey, fileData) => {
-    save(d=>({...d, units:d.units.map(u=>u.id===selUnit?{...u,files:{...u.files,[fileKey]:fileData}}:u)}));
-  };
-
-  const handleDelete = async (fileKey) => {
-    const f = files[fileKey];
-    if(f?.path) await deleteFile(f.bucket||"contracts", f.path);
-    save(d=>({...d, units:d.units.map(u=>u.id===selUnit?{...u,files:{...u.files,[fileKey]:null}}:u)}));
-  };
+  const [showPastTenancies, setShowPastTenancies] = useState(false);
 
   if(!unit) return <div style={{color:"#888",padding:20}}>אין יחידות</div>;
+
+  // Get all periods that have bills for this unit, sorted desc
+  const unitBillPeriods = BIMONTHLY_PERIODS
+    .filter(p=>bills[bKey(selUnit,p.key)]?.meterPhotos || bills[bKey(selUnit,p.key)])
+    .reverse()
+    .slice(0,12); // last 12 periods
+
+  const activeTenancy = unit.tenancies?.find(t=>t.active);
+  const pastTenancies = unit.tenancies?.filter(t=>!t.active) || [];
 
   return(
     <div>
       {/* Unit selector */}
-      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:20}}>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:16}}>
         {units.map(u=>(
           <button key={u.id} onClick={()=>setSelUnit(u.id)}
             style={{...S.btn(selUnit===u.id?"#1a2a3a":"#0e0e20",selUnit===u.id?"#6bc5f8":"#555"),border:`1px solid ${selUnit===u.id?"#6bc5f8":"#2a2a4a"}`}}>
@@ -1508,37 +1527,106 @@ function DocumentsTab({data, save}){
         ))}
       </div>
 
-      <Card>
-        <div style={{fontWeight:800,color:"#6bc5f8",marginBottom:16,fontSize:15}}>📁 מסמכים — {unit.name}</div>
+      {/* Active Tenancy Documents */}
+      {activeTenancy ? (
+        <Card style={{marginBottom:16}}>
+          <div style={{fontWeight:800,color:"#4caf88",marginBottom:4,fontSize:14}}>📋 תקופת שכירות נוכחית</div>
+          <div style={{color:"#666",fontSize:12,marginBottom:14}}>
+            {activeTenancy.tenants?.map(t=>t.name).filter(Boolean).join(" + ")||"ללא שם"}
+            {activeTenancy.startDate&&` · מ-${activeTenancy.startDate}`}
+          </div>
 
-        <FileUploadRow label="חוזה שכירות" icon="📝" bucket="contracts" unitId={selUnit}
-          fileKey="contract" files={files} onUpload={handleUpload} onDelete={handleDelete}
-          color="#e8c547" extraFields={{expiryDate:""}}/>
+          <div style={{fontSize:12,color:"#888",marginBottom:6,fontWeight:700}}>חוזה שכירות</div>
+          <DocUploadBtn label="חוזה" file={activeTenancy.contract} bucket="contracts"
+            path={`unit_${selUnit}/tenancy_${activeTenancy.id}/contract`}
+            onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,contract:f}:t)}:u)}))}
+            onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,contract:null}:t)}:u)}))}
+            color="#e8c547" showExpiry={true}/>
 
-        <FileUploadRow label="הארכת חוזה שכירות" icon="📋" bucket="contracts" unitId={selUnit}
-          fileKey="contractRenewal" files={files} onUpload={handleUpload} onDelete={handleDelete}
-          color="#e8c547" extraFields={{expiryDate:""}}/>
+          <div style={{fontSize:12,color:"#888",marginBottom:6,fontWeight:700,marginTop:10}}>הארכות חוזה</div>
+          {(activeTenancy.renewals||[]).map((r,i)=>(
+            <DocUploadBtn key={i} label={`הארכה ${i+1}`} file={r} bucket="contracts"
+              path={`unit_${selUnit}/tenancy_${activeTenancy.id}/renewal_${i}`}
+              onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,renewals:t.renewals.map((x,j)=>j===i?f:x)}:t)}:u)}))}
+              onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,renewals:t.renewals.filter((_,j)=>j!==i)}:t)}:u)}))}
+              color="#e8c547" showExpiry={true}/>
+          ))}
+          <button onClick={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,renewals:[...(t.renewals||[]),null]}:t)}:u)}))}
+            style={{...S.btn("#1a1a2e","#e8c547"),fontSize:11,marginBottom:10}}>+ הוסף הארכה</button>
 
-        <FileUploadRow label="ערבות בנקאית" icon="🏦" bucket="guarantees" unitId={selUnit}
-          fileKey="guarantee" files={files} onUpload={handleUpload} onDelete={handleDelete}
-          color="#a78bfa" extraFields={{expiryDate:""}}/>
+          <div style={{fontSize:12,color:"#888",marginBottom:6,fontWeight:700,marginTop:4}}>ערבויות בנקאיות</div>
+          {(activeTenancy.guarantees||[]).map((g,i)=>(
+            <DocUploadBtn key={i} label={`ערבות ${i+1}`} file={g} bucket="guarantees"
+              path={`unit_${selUnit}/tenancy_${activeTenancy.id}/guarantee_${i}`}
+              onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,guarantees:t.guarantees.map((x,j)=>j===i?f:x)}:t)}:u)}))}
+              onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,guarantees:t.guarantees.filter((_,j)=>j!==i)}:t)}:u)}))}
+              color="#a78bfa" showExpiry={true}/>
+          ))}
+          <button onClick={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,guarantees:[...(t.guarantees||[]),null]}:t)}:u)}))}
+            style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף ערבות</button>
+        </Card>
+      ) : (
+        <Card style={{marginBottom:16}}>
+          <div style={{color:"#555",fontSize:13,textAlign:"center",padding:12}}>אין שוכר פעיל — פתח "👥 שוכרים" ביחידות דיור</div>
+        </Card>
+      )}
 
-        <FileUploadRow label="ערבות בנקאית נוספת" icon="🏦" bucket="guarantees" unitId={selUnit}
-          fileKey="guarantee2" files={files} onUpload={handleUpload} onDelete={handleDelete}
-          color="#a78bfa" extraFields={{expiryDate:""}}/>
-
-        <FileUploadRow label="תמונת מונה מים" icon="💧" bucket="bills-uploads" unitId={selUnit}
-          fileKey="waterMeter" files={files} onUpload={handleUpload} onDelete={handleDelete}
-          color="#6bc5f8"/>
-
-        <FileUploadRow label="תמונת מונה חשמל" icon="⚡" bucket="bills-uploads" unitId={selUnit}
-          fileKey="electricMeter" files={files} onUpload={handleUpload} onDelete={handleDelete}
-          color="#e8c547"/>
-
-        <FileUploadRow label="חשבון חשמל אחרון" icon="🧾" bucket="bills-uploads" unitId={selUnit}
-          fileKey="electricBill" files={files} onUpload={handleUpload} onDelete={handleDelete}
-          color="#e8c547"/>
+      {/* Meter photos per period */}
+      <Card style={{marginBottom:16}}>
+        <div style={{fontWeight:800,color:"#6bc5f8",marginBottom:14,fontSize:14}}>📷 תמונות מונים לפי תקופה</div>
+        {BIMONTHLY_PERIODS.slice().reverse().slice(0,8).map(p=>{
+          const k=bKey(selUnit,p.key);
+          const b=bills[k];
+          if(!b) return null;
+          const photos = b.meterPhotos||{};
+          return(
+            <div key={p.key} style={{borderBottom:"1px solid #1a1a2e",paddingBottom:10,marginBottom:10}}>
+              <div style={{color:"#aaa",fontSize:12,fontWeight:700,marginBottom:6}}>{p.label}</div>
+              <div style={{display:"flex",gap:10,flexWrap:"wrap"}}>
+                {[{type:"water",label:"💧 מים",color:"#6bc5f8"},{type:"electricity",label:"⚡ חשמל",color:"#e8c547"}].map(({type,label,color})=>{
+                  const photo=photos[type];
+                  return(
+                    <div key={type} style={{display:"flex",alignItems:"center",gap:4}}>
+                      <label style={{...S.btn(photo?"#1a2a1a":"#0e1a2e",photo?color:"#555"),fontSize:11,cursor:"pointer"}}>
+                        📷 {label}{photo?"✓":""}
+                        <input type="file" accept=".jpg,.jpeg,.png" style={{display:"none"}} onChange={async e=>{
+                          const file=e.target.files[0]; if(!file) return;
+                          const path=`unit_${selUnit}/${p.key}_${type}_${Date.now()}_${file.name}`;
+                          const url=await uploadFile("bills-uploads",path,file);
+                          if(url) save(d=>({...d,bills:{...d.bills,[k]:{...d.bills[k],meterPhotos:{...(d.bills[k].meterPhotos||{}),[type]:{url,path,name:file.name,uploadDate:new Date().toLocaleDateString("en-CA")}}}}}));
+                        }}/>
+                      </label>
+                      {photo&&<a href={photo.url} target="_blank" rel="noreferrer" style={{color,fontSize:10}}>פתח</a>}
+                      {photo&&<span style={{color:"#555",fontSize:10}}>{photo.uploadDate}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+        <div style={{color:"#555",fontSize:11,textAlign:"center"}}>תמונות מונים ניתן להעלות גם ישירות מכרטיס החשבון</div>
       </Card>
+
+      {/* Past tenancies archive */}
+      {pastTenancies.length>0&&(
+        <Card>
+          <button onClick={()=>setShowPastTenancies(v=>!v)} style={{...S.btn("#1a1a2e","#555"),width:"100%",fontSize:13}}>
+            📁 ארכיון שוכרים קודמים ({pastTenancies.length}) {showPastTenancies?"▲":"▼"}
+          </button>
+          {showPastTenancies&&pastTenancies.map(t=>(
+            <div key={t.id} style={{marginTop:12,padding:12,background:"#0e0e20",borderRadius:8,opacity:0.8}}>
+              <div style={{color:"#aaa",fontWeight:700,fontSize:13,marginBottom:4}}>
+                {t.tenants?.map(ten=>ten.name).filter(Boolean).join(" + ")||"שוכר"} 
+                {t.startDate&&` (${t.startDate}${t.endDate?" — "+t.endDate:""})`}
+              </div>
+              {t.contract&&<div style={{fontSize:11}}><a href={t.contract.url} target="_blank" rel="noreferrer" style={{color:"#e8c547"}}>📝 חוזה</a>{t.contract.expiryDate&&` · פקע: ${t.contract.expiryDate}`}</div>}
+              {(t.renewals||[]).filter(r=>r?.url).map((r,i)=><div key={i} style={{fontSize:11}}><a href={r.url} target="_blank" rel="noreferrer" style={{color:"#e8c547"}}>📋 הארכה {i+1}</a></div>)}
+              {(t.guarantees||[]).filter(g=>g?.url).map((g,i)=><div key={i} style={{fontSize:11}}><a href={g.url} target="_blank" rel="noreferrer" style={{color:"#a78bfa"}}>🏦 ערבות {i+1}</a>{g.expiryDate&&` · ${g.expiryDate}`}</div>)}
+            </div>
+          ))}
+        </Card>
+      )}
     </div>
   );
 }
@@ -2009,6 +2097,26 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
                     <button onClick={()=>startEdit(row)} style={{...S.btn(b.locked?"#181818":"#1e1e3a",b.locked?"#444":"#888"),cursor:b.locked?"not-allowed":"pointer"}} title={b.locked?"נעול — בטל תשלום כדי לערוך":""}>✏️ עריכת קריאות{b.locked?" 🔒":""}</button>
                     <button onClick={()=>setDemand({unit,month})} style={S.btn("#1e2a3a","#6bc5f8")}>📄 דרישת תשלום</button>
                   </div>
+                  {/* Meter photo upload — per period */}
+                  <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap"}}>
+                    {[{type:"water",label:"💧 מונה מים",color:"#6bc5f8"},{type:"electricity",label:"⚡ מונה חשמל",color:"#e8c547"}].map(({type,label,color})=>{
+                      const photo = b.meterPhotos?.[type];
+                      return(
+                        <div key={type} style={{display:"flex",alignItems:"center",gap:4}}>
+                          <label style={{...S.btn(photo?"#1a2a1a":"#0e1a2e",photo?color:"#555"),fontSize:11,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}>
+                            📷 {label}{photo?"✓":""}
+                            <input type="file" accept=".jpg,.jpeg,.png,.pdf" style={{display:"none"}} onChange={async e=>{
+                              const file=e.target.files[0]; if(!file) return;
+                              const path=`unit_${unit.id}/${month}_${type}_${Date.now()}_${file.name}`;
+                              const url=await uploadFile("bills-uploads",path,file);
+                              if(url) save(d=>({...d,bills:{...d.bills,[k]:{...d.bills[k],meterPhotos:{...(d.bills[k].meterPhotos||{}),(type):{url,path,name:file.name,uploadDate:new Date().toLocaleDateString("en-CA")}}}}}));
+                            }}/>
+                          </label>
+                          {photo&&<a href={photo.url} target="_blank" rel="noreferrer" style={{color:color,fontSize:10}}>פתח</a>}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
             </Card>
@@ -2176,46 +2284,205 @@ function TenantForm({t, activeCount, onUpdate, onDeactivate, onRemove}){
   );
 }
 
-function TenantsModal({unit, onSave, onClose}){
-  const [tenants, setTenants] = React.useState(
-    unit.tenants?.length ? unit.tenants.map(t=>({...t}))
-    : [{id:Date.now(), name:"", idNum:"", phone:"", email:"", from:"", to:"", active:true}]
+// Helper: migrate old tenant structures to tenancies[]
+const migrateToTenancies = (unit) => {
+  if(unit.tenancies?.length) return unit.tenancies;
+  const tenancies = [];
+  // Migrate from new unit.tenants structure
+  if(unit.tenants?.length){
+    const active = unit.tenants.filter(t=>t.active);
+    const inactive = unit.tenants.filter(t=>!t.active);
+    if(active.length){
+      tenancies.push({
+        id: Date.now(),
+        active: true,
+        startDate: active[0].from||"",
+        endDate: null,
+        tenants: active.map(t=>({id:t.id||Date.now(), name:t.name||"", idNum:t.idNum||"", phone:t.phone||"", email:t.email||""})),
+        contract: null, renewals: [], guarantees: [], notes:""
+      });
+    }
+    if(inactive.length){
+      tenancies.push({
+        id: Date.now()-1,
+        active: false,
+        startDate: inactive[0]?.from||"",
+        endDate: inactive[0]?.to||"",
+        tenants: inactive.map(t=>({id:t.id||Date.now(), name:t.name||"", idNum:t.idNum||"", phone:t.phone||"", email:t.email||""})),
+        contract: null, renewals: [], guarantees: [], notes:""
+      });
+    }
+    return tenancies;
+  }
+  // Migrate from old tenantHistory structure
+  if(unit.tenantHistory?.length){
+    for(const h of unit.tenantHistory){
+      tenancies.push({
+        id: Date.now()+Math.random(),
+        active: !h.endDate,
+        startDate: h.startDate||"",
+        endDate: h.endDate||null,
+        tenants: [{id:Date.now(), name:h.name||"", idNum:"", phone:h.phone||"", email:""}],
+        contract: null, renewals: [], guarantees: [], notes:""
+      });
+    }
+    return tenancies;
+  }
+  // Empty
+  return [{id:Date.now(), active:true, startDate:"", endDate:null, tenants:[{id:Date.now(), name:"", idNum:"", phone:"", email:""}], contract:null, renewals:[], guarantees:[], notes:""}];
+};
+
+function DocUploadBtn({label, file, bucket, path, onUploaded, onDelete, color="#6bc5f8", showExpiry=false}){
+  const [uploading, setUploading] = React.useState(false);
+  return(
+    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
+      <label style={{...S.btn(file?"#1a2a1a":"#0e1a2e",file?color:"#555"),fontSize:11,cursor:"pointer",padding:"4px 8px",borderRadius:6}}>
+        {uploading?"⏳":file?"✓ "+label:"📤 "+label}
+        <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{display:"none"}} disabled={uploading} onChange={async e=>{
+          const f=e.target.files[0]; if(!f) return;
+          setUploading(true);
+          const url=await uploadFile(bucket, path+"_"+Date.now()+"_"+f.name, f);
+          if(url) onUploaded({url, path:path+"_"+Date.now()+"_"+f.name, name:f.name, uploadDate:new Date().toLocaleDateString("en-CA"), expiryDate:file?.expiryDate||""});
+          setUploading(false);
+        }}/>
+      </label>
+      {file?.url&&<a href={file.url} target="_blank" rel="noreferrer" style={{color,fontSize:10}}>פתח</a>}
+      {file&&<button onClick={onDelete} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:11}}>🗑</button>}
+      {showExpiry&&file&&(
+        <input type="date" value={file.expiryDate||""} onChange={e=>onUploaded({...file,expiryDate:e.target.value})}
+          style={{...S.inp,fontSize:10,padding:"2px 6px",width:120}} placeholder="תאריך פקיעה"/>
+      )}
+    </div>
   );
-  const [showHistory, setShowHistory] = React.useState(false);
+}
 
-  const active   = tenants.filter(t=>t.active);
-  const inactive = tenants.filter(t=>!t.active);
+function TenantsModal({unit, onSave, onClose}){
+  const [tenancies, setTenancies] = React.useState(()=>migrateToTenancies(unit));
+  const [activeTab, setActiveTab] = React.useState(0); // index into tenancies
 
-  const addTenant  = () => setTenants(prev=>[...prev, {id:Date.now(), name:"", idNum:"", phone:"", email:"", from:new Date().toLocaleDateString("en-CA"), to:"", active:true}]);
-  const update     = (id, field, val) => setTenants(prev=>prev.map(t=>t.id===id?{...t,[field]:val}:t));
-  const deactivate = (id) => setTenants(prev=>prev.map(t=>t.id===id?{...t,active:false,to:t.to||new Date().toLocaleDateString("en-CA")}:t));
-  const remove     = (id) => setTenants(prev=>prev.filter(t=>t.id!==id));
+  const activeTenancies = tenancies.filter(t=>t.active);
+  const pastTenancies   = tenancies.filter(t=>!t.active);
+  const currentIdx = activeTab < activeTenancies.length ? activeTab : 0;
+  const [showPast, setShowPast] = React.useState(false);
+
+  const updateTenancy = (id, patch) => setTenancies(prev=>prev.map(t=>t.id===id?{...t,...patch}:t));
+  const updateTenants = (id, tenants) => updateTenancy(id, {tenants});
+
+  const addNewTenancy = () => {
+    // Close active tenancies
+    setTenancies(prev=>[
+      ...prev.map(t=>t.active?{...t,active:false,endDate:new Date().toLocaleDateString("en-CA")}:t),
+      {id:Date.now(),active:true,startDate:new Date().toLocaleDateString("en-CA"),endDate:null,
+       tenants:[{id:Date.now(),name:"",idNum:"",phone:"",email:""}],contract:null,renewals:[],guarantees:[],notes:""}
+    ]);
+  };
+
+  const TenancyBlock = ({t, editable=true}) => {
+    const addTenant = () => updateTenants(t.id, [...t.tenants, {id:Date.now(),name:"",idNum:"",phone:"",email:""}]);
+    const updT = (tid,f,v) => updateTenants(t.id, t.tenants.map(ten=>ten.id===tid?{...ten,[f]:v}:ten));
+    const delT = (tid) => updateTenants(t.id, t.tenants.filter(ten=>ten.id!==tid));
+    const basePath = `unit_${unit.id}/tenancy_${t.id}`;
+
+    return(
+      <div style={{background:"#0e0e20",borderRadius:10,padding:14,marginBottom:12,border:`1px solid ${editable?"#2a4a2a":"#2a2a4a"}`}}>
+        {/* Dates */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+          <label style={S.lbl}>תאריך כניסה
+            <input type="date" value={t.startDate||""} onChange={e=>updateTenancy(t.id,{startDate:e.target.value})} style={S.inp} disabled={!editable}/>
+          </label>
+          {!t.active&&<label style={S.lbl}>תאריך יציאה
+            <input type="date" value={t.endDate||""} onChange={e=>updateTenancy(t.id,{endDate:e.target.value})} style={S.inp} disabled={!editable}/>
+          </label>}
+        </div>
+
+        {/* Tenants */}
+        <div style={{fontWeight:700,color:"#6bc5f8",fontSize:12,marginBottom:8}}>👥 שוכרים</div>
+        {t.tenants.map((ten,i)=>(
+          <div key={ten.id} style={{background:"#12122a",borderRadius:8,padding:10,marginBottom:8}}>
+            <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
+              <div style={{color:"#888",fontSize:11}}>שוכר {i+1}</div>
+              {editable&&t.tenants.length>1&&<button onClick={()=>delT(ten.id)} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:11}}>🗑</button>}
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+              <label style={S.lbl}>שם מלא<input value={ten.name||""} onChange={e=>updT(ten.id,"name",e.target.value)} style={S.inp} disabled={!editable}/></label>
+              <label style={S.lbl}>ת.ז.<input value={ten.idNum||""} onChange={e=>updT(ten.id,"idNum",e.target.value)} style={S.inp} placeholder="000000000" disabled={!editable}/></label>
+              <label style={S.lbl}>טלפון<input value={ten.phone||""} onChange={e=>updT(ten.id,"phone",e.target.value)} style={S.inp} dir="ltr" disabled={!editable}/></label>
+              <label style={S.lbl}>מייל<input value={ten.email||""} onChange={e=>updT(ten.id,"email",e.target.value)} style={S.inp} dir="ltr" disabled={!editable}/></label>
+            </div>
+          </div>
+        ))}
+        {editable&&<button onClick={addTenant} style={{...S.btn("#1a2a3a","#6bc5f8"),fontSize:11,marginBottom:12,width:"100%"}}>+ הוסף שוכר</button>}
+
+        {/* Documents */}
+        <div style={{fontWeight:700,color:"#a78bfa",fontSize:12,marginBottom:8}}>📋 מסמכים</div>
+
+        <div style={{fontSize:11,color:"#888",marginBottom:4}}>חוזה שכירות</div>
+        <DocUploadBtn label="חוזה" file={t.contract} bucket="contracts" path={`${basePath}/contract`}
+          onUploaded={f=>updateTenancy(t.id,{contract:f})}
+          onDelete={()=>updateTenancy(t.id,{contract:null})}
+          color="#e8c547" showExpiry={true}/>
+
+        <div style={{fontSize:11,color:"#888",marginBottom:4,marginTop:8}}>הארכות חוזה</div>
+        {(t.renewals||[]).map((r,i)=>(
+          <DocUploadBtn key={i} label={`הארכה ${i+1}`} file={r} bucket="contracts" path={`${basePath}/renewal_${i}`}
+            onUploaded={f=>updateTenancy(t.id,{renewals:(t.renewals||[]).map((x,j)=>j===i?f:x)})}
+            onDelete={()=>updateTenancy(t.id,{renewals:(t.renewals||[]).filter((_,j)=>j!==i)})}
+            color="#e8c547" showExpiry={true}/>
+        ))}
+        {editable&&<button onClick={()=>updateTenancy(t.id,{renewals:[...(t.renewals||[]),null]})} style={{...S.btn("#1a1a2e","#e8c547"),fontSize:10,marginBottom:8}}>+ הוסף הארכה</button>}
+
+        <div style={{fontSize:11,color:"#888",marginBottom:4,marginTop:4}}>ערבויות בנקאיות</div>
+        {(t.guarantees||[]).map((g,i)=>(
+          <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:4}}>
+            <DocUploadBtn label={`ערבות ${i+1}`} file={g} bucket="guarantees" path={`${basePath}/guarantee_${i}`}
+              onUploaded={f=>updateTenancy(t.id,{guarantees:(t.guarantees||[]).map((x,j)=>j===i?f:x)})}
+              onDelete={()=>updateTenancy(t.id,{guarantees:(t.guarantees||[]).filter((_,j)=>j!==i)})}
+              color="#a78bfa" showExpiry={true}/>
+            {g&&<input type="number" placeholder="סכום ₪" value={g.amount||""} onChange={e=>updateTenancy(t.id,{guarantees:(t.guarantees||[]).map((x,j)=>j===i?{...x,amount:e.target.value}:x)})}
+              style={{...S.inp,fontSize:10,padding:"2px 6px",width:80}}/>}
+          </div>
+        ))}
+        {editable&&<button onClick={()=>updateTenancy(t.id,{guarantees:[...(t.guarantees||[]),null]})} style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:10,marginBottom:8}}>+ הוסף ערבות</button>}
+
+        {/* Notes */}
+        <label style={{...S.lbl,marginTop:8}}>הערות
+          <textarea value={t.notes||""} onChange={e=>updateTenancy(t.id,{notes:e.target.value})}
+            style={{...S.inp,height:60,resize:"vertical",fontSize:12}} disabled={!editable}/>
+        </label>
+      </div>
+    );
+  };
 
   return(
     <div style={{position:"fixed",inset:0,background:"#000c",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
-      <div style={{background:"#12122a",border:"1px solid #2a2a4a",borderRadius:16,padding:24,maxWidth:520,width:"95%",maxHeight:"90vh",overflowY:"auto"}}>
+      <div style={{background:"#12122a",border:"1px solid #2a2a4a",borderRadius:16,padding:24,maxWidth:560,width:"95%",maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <div style={{fontWeight:800,fontSize:17,color:"#e8c547"}}>👥 שוכרים — {unit.name}</div>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#888",fontSize:22,cursor:"pointer"}}>✕</button>
         </div>
 
-        {/* Active tenants */}
-        {active.map(t=><TenantForm key={t.id} t={t} activeCount={active.length} onUpdate={update} onDeactivate={deactivate} onRemove={remove}/>)}
+        {/* Active tenancies */}
+        {activeTenancies.length===0&&(
+          <div style={{color:"#555",fontSize:13,textAlign:"center",padding:20}}>אין שוכר פעיל</div>
+        )}
+        {activeTenancies.map(t=><TenancyBlock key={t.id} t={t} editable={true}/>)}
 
-        <button onClick={addTenant} style={{...S.btn("#1a2a3a","#6bc5f8"),width:"100%",marginBottom:16,fontSize:13}}>+ הוסף שוכר</button>
+        <button onClick={addNewTenancy} style={{...S.btn("#1a3a1a","#4caf88"),width:"100%",marginBottom:16,fontSize:13}}>
+          🔄 שוכרים חדשים (סיים תקופה נוכחית)
+        </button>
 
-        {/* History */}
-        {inactive.length>0&&(
+        {/* Past tenancies */}
+        {pastTenancies.length>0&&(
           <>
-            <button onClick={()=>setShowHistory(v=>!v)} style={{...S.btn("#1a1a2e","#555"),width:"100%",marginBottom:10,fontSize:12}}>
-              📁 היסטוריית שוכרים ({inactive.length}) {showHistory?"▲":"▼"}
+            <button onClick={()=>setShowPast(v=>!v)} style={{...S.btn("#1a1a2e","#555"),width:"100%",marginBottom:10,fontSize:12}}>
+              📁 שוכרים קודמים ({pastTenancies.length}) {showPast?"▲":"▼"}
             </button>
-            {showHistory&&inactive.map(t=><TenantForm key={t.id} t={t} activeCount={active.length} onUpdate={update} onDeactivate={deactivate} onRemove={remove}/>)}
+            {showPast&&pastTenancies.map(t=><TenancyBlock key={t.id} t={t} editable={false}/>)}
           </>
         )}
 
         <div style={{display:"flex",gap:10,marginTop:8}}>
-          <button onClick={()=>onSave(tenants)} style={{...S.btn("#e8c547","#1a1a2e"),flex:1}}>💾 שמור</button>
+          <button onClick={()=>onSave(tenancies)} style={{...S.btn("#e8c547","#1a1a2e"),flex:1}}>💾 שמור</button>
           <button onClick={onClose} style={S.btn("#2a2a4a","#888")}>ביטול</button>
         </div>
       </div>
@@ -2228,8 +2495,8 @@ function TenantsModal({unit, onSave, onClose}){
 function UnitsTab({data,save,readonly=false}){
   const [tenantsModal, setTenantsModal] = useState(null);
 
-  const saveTenants = (tenants) => {
-    save(d=>({...d, units:d.units.map(u=>u.id===tenantsModal.id?{...u,tenants}:u)}));
+  const saveTenants = (tenancies) => {
+    save(d=>({...d, units:d.units.map(u=>u.id===tenantsModal.id?{...u,tenancies,tenants:tenancies.filter(t=>t.active).flatMap(t=>t.tenants.map(ten=>({...ten,active:true,from:t.startDate,to:t.endDate})))}:u)}));
     setTenantsModal(null);
   };
 
