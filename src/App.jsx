@@ -1325,18 +1325,19 @@ function RemindersTab({data, save}){
         }
       }
     }
-    // Fallback: old unit-level fields
-    const fallbackChecks = [
-      {key:"contractEnd",   label:"חוזה שכירות",   endField:unit.contractEnd,   alertDays:unit.contractAlertDays||60},
-      {key:"guaranteeEnd",  label:"ערבות בנקאית 1", endField:unit.guaranteeEnd,  alertDays:unit.guaranteeAlertDays||30},
-      {key:"guarantee2End", label:"ערבות בנקאית 2", endField:unit.guarantee2End, alertDays:unit.guarantee2AlertDays||30},
-    ];
-    for(const c of fallbackChecks){
-      if(!c.endField) continue;
-      if(autoAlerts.some(a=>a.id.includes(unit.id))) continue; // already have tenancy data
-      const diff = Math.ceil((new Date(c.endField) - new Date()) / (1000*60*60*24));
-      if(diff <= c.alertDays){
-        autoAlerts.push({id:`auto_${unit.id}_${c.key}`,title:`${c.label} — ${unit.name}`,date:c.endField,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
+    // Fallback: old unit-level fields (only if no tenancies at all)
+    if(!unit.tenancies?.length){
+      const fallbackChecks = [
+        {key:"contractEnd",   label:"חוזה שכירות",   endField:unit.contractEnd,   alertDays:unit.contractAlertDays||60},
+        {key:"guaranteeEnd",  label:"ערבות בנקאית 1", endField:unit.guaranteeEnd,  alertDays:unit.guaranteeAlertDays||30},
+        {key:"guarantee2End", label:"ערבות בנקאית 2", endField:unit.guarantee2End, alertDays:unit.guarantee2AlertDays||30},
+      ];
+      for(const c of fallbackChecks){
+        if(!c.endField) continue;
+        const diff = Math.ceil((new Date(c.endField) - new Date()) / (1000*60*60*24));
+        if(diff <= c.alertDays){
+          autoAlerts.push({id:`auto_${unit.id}_${c.key}`,title:`${c.label} — ${unit.name}`,date:c.endField,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
+        }
       }
     }
   }
@@ -3135,7 +3136,22 @@ export default function App(){
   const userRole  = isClaudeEnv ? "editor"  : auth?.userRole;
   const userUnitId = isClaudeEnv ? null : auth?.unitId;   // non-null = unit_viewer
   const readonly = !canEdit(userRole);
-  const { data, syncOk, lastSync } = rawHook;
+
+  // Auto-migrate old tenant structures to tenancies[] when data loads
+  const rawData = rawHook.data;
+  const data = React.useMemo(()=>{
+    if(!rawData) return rawData;
+    const needsMigration = rawData.units?.some(u=>!u.tenancies?.length);
+    if(!needsMigration) return rawData;
+    return {
+      ...rawData,
+      units: rawData.units.map(u=>
+        u.tenancies?.length ? u : {...u, tenancies: migrateToTenancies(u)}
+      )
+    };
+  }, [rawData]);
+
+  const { syncOk, lastSync } = rawHook;
   const save = readonly ? () => {} : rawHook.save;
 
   // ── Auth gates (only outside Claude) ─────────────────────────────────────
