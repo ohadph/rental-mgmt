@@ -1325,6 +1325,18 @@ function RemindersTab({data, save}){
         }
       }
     }
+    // Also read from unit.renewals[] and unit.guarantees[] (new unit-level structure)
+    for(const [i,r] of (unit.renewals||[]).entries()){
+      if(!r.endDate) continue;
+      const diff = Math.ceil((new Date(r.endDate)-new Date())/(1000*60*60*24));
+      if(diff<=(r.alertDays||60)) autoAlerts.push({id:`auto_${unit.id}_renewal_${i}`,title:`הארכת חוזה ${i+1} — ${unit.name}`,date:r.endDate,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
+    }
+    for(const [i,g] of (unit.guarantees||[]).entries()){
+      if(!g.endDate) continue;
+      const diff = Math.ceil((new Date(g.endDate)-new Date())/(1000*60*60*24));
+      if(diff<=(g.alertDays||30)) autoAlerts.push({id:`auto_${unit.id}_guarantee_${i}`,title:`הארכת ערבות בנקאית ${i+1}${g.amount?` — ₪${g.amount}`:`"}` — ${unit.name}`,date:g.endDate,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
+    }
+
     // Fallback: old unit-level fields (only if no tenancies at all)
     if(!unit.tenancies?.length){
       const fallbackChecks = [
@@ -1573,7 +1585,7 @@ function DocumentsTab({data, save}){
               color="#a78bfa" showExpiry={true}/>
           ))}
           <button onClick={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,guarantees:[...(t.guarantees||[]),null]}:t)}:u)}))}
-            style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף ערבות</button>
+            style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף הארכת ערבות</button>
         </Card>
       ) : (
         <Card style={{marginBottom:16}}>
@@ -1651,9 +1663,9 @@ function AlertsBar({data}){
   // Check contract/guarantee expiry from unit fields
   for(const unit of units){
     const checks = [
-      {label:"חוזה שכירות",   end:unit.contractEnd,   days:unit.contractAlertDays||60},
-      {label:"ערבות בנקאית 1",end:unit.guaranteeEnd,  days:unit.guaranteeAlertDays||30},
-      {label:"ערבות בנקאית 2",end:unit.guarantee2End, days:unit.guarantee2AlertDays||30},
+      {label:"חוזה שכירות", end:unit.contractEnd, days:unit.contractAlertDays||60},
+      ...(unit.renewals||[]).map((r,i)=>({label:`הארכת חוזה ${i+1}`,end:r.endDate,days:r.alertDays||60})),
+      ...(unit.guarantees||[]).map((g,i)=>({label:`הארכת ערבות ${i+1}${g.amount?` ₪${g.amount}`:""}`,end:g.endDate,days:g.alertDays||30})),
     ];
     for(const c of checks){
       if(!c.end) continue;
@@ -2481,7 +2493,7 @@ function TenantsModal({unit, onSave, onClose}){
               style={{...S.inp,fontSize:10,padding:"2px 6px",width:80}}/>}
           </div>
         ))}
-        {editable&&<button onClick={()=>updateTenancy(t.id,{guarantees:[...(t.guarantees||[]),null]})} style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:10,marginBottom:8}}>+ הוסף ערבות</button>}
+        {editable&&<button onClick={()=>updateTenancy(t.id,{guarantees:[...(t.guarantees||[]),null]})} style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:10,marginBottom:8}}>+ הוסף הארכת ערבות</button>}
 
         {/* Notes */}
         <label style={{...S.lbl,marginTop:8}}>הערות
@@ -2549,10 +2561,16 @@ function UnitsTab({data,save,readonly=false}){
 
   const startEditUnit=(u)=>{
     setEditingUnit(u.id);
-    setUnitForm({name:u.name,rent:u.rent,persons:u.persons||1,arnonaAmount:u.arnonaAmount||0,waterMeterId:u.waterMeterId||'',electricMeterId:u.electricMeterId||'',contractEnd:u.contractEnd||'',contractAlertDays:u.contractAlertDays||60,guaranteeEnd:u.guaranteeEnd||'',guaranteeAlertDays:u.guaranteeAlertDays||30,guarantee2End:u.guarantee2End||'',guarantee2AlertDays:u.guarantee2AlertDays||30});
+    setUnitForm({
+      name:u.name, rent:u.rent, persons:u.persons||1, arnonaAmount:u.arnonaAmount||0,
+      waterMeterId:u.waterMeterId||'', electricMeterId:u.electricMeterId||'',
+      contractEnd:u.contractEnd||'', contractAlertDays:u.contractAlertDays||60,
+      renewals: u.renewals || [],
+      guarantees: u.guarantees || [],
+    });
   };
   const saveUnit=()=>{
-    save(d=>({...d,units:d.units.map(u=>u.id===editingUnit?{...u,...unitForm,rent:+unitForm.rent,persons:+unitForm.persons,arnonaAmount:+unitForm.arnonaAmount||0,contractAlertDays:+unitForm.contractAlertDays||60,guaranteeAlertDays:+unitForm.guaranteeAlertDays||30,guarantee2AlertDays:+unitForm.guarantee2AlertDays||30}:u)}));
+    save(d=>({...d,units:d.units.map(u=>u.id===editingUnit?{...u,...unitForm,rent:+unitForm.rent,persons:+unitForm.persons,arnonaAmount:+unitForm.arnonaAmount||0,contractAlertDays:+unitForm.contractAlertDays||60,renewals:unitForm.renewals||[],guarantees:unitForm.guarantees||[]}:u)}));
     setEditingUnit(null);
   };
 
@@ -2708,15 +2726,35 @@ function UnitsTab({data,save,readonly=false}){
                   <label style={S.lbl}>מספר נפשות<input type="number" min="1" max="20" value={unitForm.persons} onChange={e=>setUnitForm(p=>({...p,persons:e.target.value}))} style={S.inp}/></label>
                   <label style={S.lbl}>ארנונה + מיסי מושב (₪/חודש) — 0 אם כלול בשכירות<input type="number" min="0" value={unitForm.arnonaAmount||0} onChange={e=>setUnitForm(p=>({...p,arnonaAmount:e.target.value}))} style={S.inp}/></label>
                   <div style={{borderTop:"1px solid #2a2a4a",paddingTop:10,marginTop:4}}>
-                    <div style={{color:"#a78bfa",fontSize:12,fontWeight:700,marginBottom:8}}>📋 חוזה וערבויות</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                      <label style={S.lbl}>תאריך סיום חוזה<input type="date" value={unitForm.contractEnd||""} onChange={e=>setUnitForm(p=>({...p,contractEnd:e.target.value}))} style={S.inp}/></label>
+                    {/* חוזה */}
+                    <div style={{color:"#e8c547",fontSize:12,fontWeight:700,marginBottom:8}}>📋 חוזה שכירות</div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                      <label style={S.lbl}>תאריך סיום<input type="date" value={unitForm.contractEnd||""} onChange={e=>setUnitForm(p=>({...p,contractEnd:e.target.value}))} style={S.inp}/></label>
                       <label style={S.lbl}>התראה (ימים לפני)<input type="number" min="1" value={unitForm.contractAlertDays||60} onChange={e=>setUnitForm(p=>({...p,contractAlertDays:e.target.value}))} style={S.inp}/></label>
-                      <label style={S.lbl}>תאריך סיום ערבות 1<input type="date" value={unitForm.guaranteeEnd||""} onChange={e=>setUnitForm(p=>({...p,guaranteeEnd:e.target.value}))} style={S.inp}/></label>
-                      <label style={S.lbl}>התראה (ימים לפני)<input type="number" min="1" value={unitForm.guaranteeAlertDays||30} onChange={e=>setUnitForm(p=>({...p,guaranteeAlertDays:e.target.value}))} style={S.inp}/></label>
-                      <label style={S.lbl}>תאריך סיום ערבות 2<input type="date" value={unitForm.guarantee2End||""} onChange={e=>setUnitForm(p=>({...p,guarantee2End:e.target.value}))} style={S.inp}/></label>
-                      <label style={S.lbl}>התראה (ימים לפני)<input type="number" min="1" value={unitForm.guarantee2AlertDays||30} onChange={e=>setUnitForm(p=>({...p,guarantee2AlertDays:e.target.value}))} style={S.inp}/></label>
                     </div>
+
+                    {/* הארכות */}
+                    <div style={{color:"#e8c547",fontSize:11,fontWeight:700,marginBottom:6}}>הארכות חוזה</div>
+                    {(unitForm.renewals||[]).map((r,i)=>(
+                      <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:6,marginBottom:6,background:"#0e0e20",borderRadius:6,padding:8}}>
+                        <label style={S.lbl}>הארכה {i+1} — סיום<input type="date" value={r.endDate||""} onChange={e=>setUnitForm(p=>({...p,renewals:p.renewals.map((x,j)=>j===i?{...x,endDate:e.target.value}:x)}))} style={S.inp}/></label>
+                        <label style={S.lbl}>התראה (ימים)<input type="number" min="1" value={r.alertDays||60} onChange={e=>setUnitForm(p=>({...p,renewals:p.renewals.map((x,j)=>j===i?{...x,alertDays:+e.target.value}:x)}))} style={S.inp}/></label>
+                        <button onClick={()=>setUnitForm(p=>({...p,renewals:p.renewals.filter((_,j)=>j!==i)}))} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:14,alignSelf:"flex-end",paddingBottom:6}}>🗑</button>
+                      </div>
+                    ))}
+                    <button onClick={()=>setUnitForm(p=>({...p,renewals:[...(p.renewals||[]),{endDate:"",alertDays:60}]}))} style={{...S.btn("#1a1a2e","#e8c547"),fontSize:11,marginBottom:12}}>+ הוסף הארכת חוזה</button>
+
+                    {/* ערבויות */}
+                    <div style={{color:"#a78bfa",fontSize:12,fontWeight:700,marginBottom:6,marginTop:4}}>🏦 הארכות ערבות בנקאית</div>
+                    {(unitForm.guarantees||[]).map((g,i)=>(
+                      <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:6,marginBottom:6,background:"#0e0e20",borderRadius:6,padding:8}}>
+                        <label style={S.lbl}>הארכת ערבות {i+1} — סכום (₪)<input type="number" value={g.amount||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,amount:e.target.value}:x)}))} style={S.inp} placeholder="0"/></label>
+                        <label style={S.lbl}>תאריך פקיעה<input type="date" value={g.endDate||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,endDate:e.target.value}:x)}))} style={S.inp}/></label>
+                        <label style={S.lbl}>התראה (ימים)<input type="number" min="1" value={g.alertDays||30} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,alertDays:+e.target.value}:x)}))} style={S.inp}/></label>
+                        <button onClick={()=>setUnitForm(p=>({...p,guarantees:p.guarantees.filter((_,j)=>j!==i)}))} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:14,alignSelf:"flex-end",paddingBottom:6}}>🗑</button>
+                      </div>
+                    ))}
+                    <button onClick={()=>setUnitForm(p=>({...p,guarantees:[...(p.guarantees||[]),{amount:"",endDate:"",alertDays:30}]}))} style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף הארכת ערבות</button>
                   </div>
                   <label style={S.lbl}>💧 מספר מונה מים<input value={unitForm.waterMeterId} onChange={e=>setUnitForm(p=>({...p,waterMeterId:e.target.value}))} style={S.inp} placeholder="12345678"/></label>
                   <label style={S.lbl}>⚡ מספר מונה חשמל<input value={unitForm.electricMeterId} onChange={e=>setUnitForm(p=>({...p,electricMeterId:e.target.value}))} style={S.inp} placeholder="87654321"/></label>
@@ -2763,7 +2801,8 @@ function UnitsTab({data,save,readonly=false}){
                       <span style={{color:"#e8c547",fontSize:12,fontWeight:700}}>{fmt(u.arnonaAmount)}</span>
                     </div>}
                     {u.contractEnd&&<div style={{fontSize:11,color:isExpiringSoon(u.contractEnd,u.contractAlertDays||60)?"#e85c4a":"#555",marginTop:4}}>📋 חוזה עד: {u.contractEnd}{isExpiringSoon(u.contractEnd,u.contractAlertDays||60)&&" ⚠️"}</div>}
-                    {u.guaranteeEnd&&<div style={{fontSize:11,color:isExpiringSoon(u.guaranteeEnd,u.guaranteeAlertDays||30)?"#e85c4a":"#555",marginTop:2}}>🏦 ערבות עד: {u.guaranteeEnd}{isExpiringSoon(u.guaranteeEnd,u.guaranteeAlertDays||30)&&" ⚠️"}</div>}
+                    {(u.renewals||[]).map((r,i)=>r.endDate&&<div key={i} style={{fontSize:11,color:isExpiringSoon(r.endDate,r.alertDays||60)?"#e85c4a":"#555",marginTop:2}}>📋 הארכה {i+1} עד: {r.endDate}{isExpiringSoon(r.endDate,r.alertDays||60)&&" ⚠️"}</div>)}
+                    {(u.guarantees||[]).map((g,i)=>g.endDate&&<div key={i} style={{fontSize:11,color:isExpiringSoon(g.endDate,g.alertDays||30)?"#e85c4a":"#555",marginTop:2}}>🏦 הארכת ערבות {i+1}{g.amount?` — ₪${g.amount}`:""} עד: {g.endDate}{isExpiringSoon(g.endDate,g.alertDays||30)&&" ⚠️"}</div>)}
                   </div>
 
                   {/* Actions — hidden for viewers */}
