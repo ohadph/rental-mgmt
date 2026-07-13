@@ -1334,7 +1334,7 @@ function RemindersTab({data, save}){
     for(const [i,g] of (unit.guarantees||[]).entries()){
       if(!g.endDate) continue;
       const diff = Math.ceil((new Date(g.endDate)-new Date())/(1000*60*60*24));
-      if(diff<=(g.alertDays||30)) autoAlerts.push({id:`auto_${unit.id}_guarantee_${i}`,title:`הארכת ערבות בנקאית ${i+1}${g.amount?` — ₪${g.amount}`:`"}` — ${unit.name}`,date:g.endDate,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
+      if(diff<=(g.alertDays||30)) autoAlerts.push({id:`auto_${unit.id}_guarantee_${i}`,title:`הארכת ערבות בנקאית ${i+1}${g.amount?` — ₪${g.amount}`:""} — ${unit.name}`,date:g.endDate,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
     }
 
     // Fallback: old unit-level fields (only if no tenancies at all)
