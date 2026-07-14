@@ -1549,49 +1549,71 @@ function DocumentsTab({data, save}){
         ))}
       </div>
 
-      {/* Active Tenancy Documents */}
-      {activeTenancy ? (
-        <Card style={{marginBottom:16}}>
-          <div style={{fontWeight:800,color:"#4caf88",marginBottom:4,fontSize:14}}>📋 תקופת שכירות נוכחית</div>
-          <div style={{color:"#666",fontSize:12,marginBottom:14}}>
-            {activeTenancy.tenants?.map(t=>t.name).filter(Boolean).join(" + ")||"ללא שם"}
-            {activeTenancy.startDate&&` · מ-${activeTenancy.startDate}`}
+      {/* Active Tenancy Documents - pulls from unit data, file upload only */}
+      <Card style={{marginBottom:16}}>
+        <div style={{fontWeight:800,color:"#4caf88",marginBottom:4,fontSize:14}}>📋 מסמכים — {unit.name}</div>
+        <div style={{color:"#555",fontSize:11,marginBottom:14}}>הנתונים מנוהלים בלשונית "יחידות דיור". כאן ניתן לתייק קבצים בלבד.</div>
+
+        {/* חוזה */}
+        {unit.contractEnd ? (
+          <>
+            <div style={{fontSize:12,color:"#e8c547",fontWeight:700,marginBottom:6}}>📋 חוזה שכירות
+              <span style={{color:"#555",fontWeight:400,marginRight:6,fontSize:11}}>עד {unit.contractEnd}{isExpiringSoon(unit.contractEnd,unit.contractAlertDays||60)&&" ⚠️"}</span>
+            </div>
+            <DocUploadBtn label="העלה חוזה" file={unit.contractFile} bucket="contracts"
+              path={`unit_${selUnit}/contract`}
+              onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,contractFile:f}:u)}))}
+              onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,contractFile:null}:u)}))}
+              color="#e8c547"/>
+          </>
+        ) : (
+          <div style={{color:"#555",fontSize:12,marginBottom:10}}>📋 חוזה — לא הוגדר תאריך סיום ביחידות דיור</div>
+        )}
+
+        {/* הארכות חוזה */}
+        {(unit.renewals||[]).length>0&&(
+          <>
+            <div style={{fontSize:12,color:"#e8c547",fontWeight:700,marginBottom:6,marginTop:10}}>הארכות חוזה</div>
+            {(unit.renewals||[]).map((r,i)=>(
+              <div key={i} style={{marginBottom:6}}>
+                <div style={{color:"#aaa",fontSize:11,marginBottom:3}}>
+                  הארכה {i+1}{r.endDate&&` — עד ${r.endDate}`}{r.endDate&&isExpiringSoon(r.endDate,r.alertDays||60)&&" ⚠️"}
+                </div>
+                <DocUploadBtn label={`הארכה ${i+1}`} file={r.file} bucket="contracts"
+                  path={`unit_${selUnit}/renewal_${i}`}
+                  onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,renewals:u.renewals.map((x,j)=>j===i?{...x,file:f}:x)}:u)}))}
+                  onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,renewals:u.renewals.map((x,j)=>j===i?{...x,file:null}:x)}:u)}))}
+                  color="#e8c547"/>
+              </div>
+            ))}
+          </>
+        )}
+
+        {/* הארכות ערבות */}
+        {(unit.guarantees||[]).length>0&&(
+          <>
+            <div style={{fontSize:12,color:"#a78bfa",fontWeight:700,marginBottom:6,marginTop:10}}>🏦 הארכות ערבות בנקאית</div>
+            {(unit.guarantees||[]).map((g,i)=>(
+              <div key={i} style={{marginBottom:6}}>
+                <div style={{color:"#aaa",fontSize:11,marginBottom:3}}>
+                  הארכת ערבות {i+1}{g.amount&&` — ₪${g.amount}`}{g.endDate&&` — עד ${g.endDate}`}{g.endDate&&isExpiringSoon(g.endDate,g.alertDays||30)&&" ⚠️"}
+                </div>
+                <DocUploadBtn label={`הארכת ערבות ${i+1}`} file={g.file} bucket="guarantees"
+                  path={`unit_${selUnit}/guarantee_${i}`}
+                  onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,guarantees:u.guarantees.map((x,j)=>j===i?{...x,file:f}:x)}:u)}))}
+                  onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,guarantees:u.guarantees.map((x,j)=>j===i?{...x,file:null}:x)}:u)}))}
+                  color="#a78bfa"/>
+              </div>
+            ))}
+          </>
+        )}
+
+        {!unit.contractEnd&&!(unit.renewals||[]).length&&!(unit.guarantees||[]).length&&(
+          <div style={{color:"#555",fontSize:12,textAlign:"center",padding:16}}>
+            הגדר תאריכי חוזה וערבויות בלשונית "יחידות דיור" → ✏️ עריכה
           </div>
-
-          <div style={{fontSize:12,color:"#888",marginBottom:6,fontWeight:700}}>חוזה שכירות</div>
-          <DocUploadBtn label="חוזה" file={activeTenancy.contract} bucket="contracts"
-            path={`unit_${selUnit}/tenancy_${activeTenancy.id}/contract`}
-            onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,contract:f}:t)}:u)}))}
-            onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,contract:null}:t)}:u)}))}
-            color="#e8c547" showExpiry={true}/>
-
-          <div style={{fontSize:12,color:"#888",marginBottom:6,fontWeight:700,marginTop:10}}>הארכות חוזה</div>
-          {(activeTenancy.renewals||[]).map((r,i)=>(
-            <DocUploadBtn key={i} label={`הארכה ${i+1}`} file={r} bucket="contracts"
-              path={`unit_${selUnit}/tenancy_${activeTenancy.id}/renewal_${i}`}
-              onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,renewals:t.renewals.map((x,j)=>j===i?f:x)}:t)}:u)}))}
-              onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,renewals:t.renewals.filter((_,j)=>j!==i)}:t)}:u)}))}
-              color="#e8c547" showExpiry={true}/>
-          ))}
-          <button onClick={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,renewals:[...(t.renewals||[]),null]}:t)}:u)}))}
-            style={{...S.btn("#1a1a2e","#e8c547"),fontSize:11,marginBottom:10}}>+ הוסף הארכה</button>
-
-          <div style={{fontSize:12,color:"#888",marginBottom:6,fontWeight:700,marginTop:4}}>ערבויות בנקאיות</div>
-          {(activeTenancy.guarantees||[]).map((g,i)=>(
-            <DocUploadBtn key={i} label={`ערבות ${i+1}`} file={g} bucket="guarantees"
-              path={`unit_${selUnit}/tenancy_${activeTenancy.id}/guarantee_${i}`}
-              onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,guarantees:t.guarantees.map((x,j)=>j===i?f:x)}:t)}:u)}))}
-              onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,guarantees:t.guarantees.filter((_,j)=>j!==i)}:t)}:u)}))}
-              color="#a78bfa" showExpiry={true}/>
-          ))}
-          <button onClick={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,tenancies:u.tenancies.map(t=>t.id===activeTenancy.id?{...t,guarantees:[...(t.guarantees||[]),null]}:t)}:u)}))}
-            style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף הארכת ערבות</button>
-        </Card>
-      ) : (
-        <Card style={{marginBottom:16}}>
-          <div style={{color:"#555",fontSize:13,textAlign:"center",padding:12}}>אין שוכר פעיל — פתח "👥 שוכרים" ביחידות דיור</div>
-        </Card>
-      )}
+        )}
+      </Card>
 
       {/* Meter photos per period */}
       <Card style={{marginBottom:16}}>
@@ -2746,6 +2768,7 @@ function UnitsTab({data,save,readonly=false}){
 
                     {/* ערבויות */}
                     <div style={{color:"#a78bfa",fontSize:12,fontWeight:700,marginBottom:6,marginTop:4}}>🏦 הארכות ערבות בנקאית</div>
+                    {(unitForm.guarantees?.length===0)&&<div style={{color:"#555",fontSize:11,marginBottom:6}}>לחץ "הוסף" להוספת ערבות</div>}
                     {(unitForm.guarantees||[]).map((g,i)=>(
                       <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:6,marginBottom:6,background:"#0e0e20",borderRadius:6,padding:8}}>
                         <label style={S.lbl}>הארכת ערבות {i+1} — סכום (₪)<input type="number" value={g.amount||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,amount:e.target.value}:x)}))} style={S.inp} placeholder="0"/></label>
