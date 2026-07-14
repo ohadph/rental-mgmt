@@ -1334,7 +1334,7 @@ function RemindersTab({data, save}){
     for(const [i,g] of (unit.guarantees||[]).entries()){
       if(!g.endDate) continue;
       const diff = Math.ceil((new Date(g.endDate)-new Date())/(1000*60*60*24));
-      if(diff<=(g.alertDays||30)) autoAlerts.push({id:`auto_${unit.id}_guarantee_${i}`,title:`הארכת ערבות בנקאית ${i+1}${g.amount?` — ₪${g.amount}`:""} — ${unit.name}`,date:g.endDate,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
+      if(diff<=(g.alertDays||30)) autoAlerts.push({id:`auto_${unit.id}_guarantee_${i}`,title:`${i===0?"ערבות בנקאית":`הארכת ערבות ${i}`}${g.number?` מס' ${g.number}`:""}${g.amount?` — ₪${g.amount}`:""} — ${unit.name}`,date:g.endDate,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
     }
 
     // Fallback: old unit-level fields (only if no tenancies at all)
@@ -2767,17 +2767,23 @@ function UnitsTab({data,save,readonly=false}){
                     <button onClick={()=>setUnitForm(p=>({...p,renewals:[...(p.renewals||[]),{endDate:"",alertDays:60}]}))} style={{...S.btn("#1a1a2e","#e8c547"),fontSize:11,marginBottom:12}}>+ הוסף הארכת חוזה</button>
 
                     {/* ערבויות */}
-                    <div style={{color:"#a78bfa",fontSize:12,fontWeight:700,marginBottom:6,marginTop:4}}>🏦 הארכות ערבות בנקאית</div>
-                    {(unitForm.guarantees?.length===0)&&<div style={{color:"#555",fontSize:11,marginBottom:6}}>לחץ "הוסף" להוספת ערבות</div>}
+                    <div style={{color:"#a78bfa",fontSize:12,fontWeight:700,marginBottom:6,marginTop:4}}>🏦 ערבויות בנקאיות</div>
                     {(unitForm.guarantees||[]).map((g,i)=>(
-                      <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr auto",gap:6,marginBottom:6,background:"#0e0e20",borderRadius:6,padding:8}}>
-                        <label style={S.lbl}>הארכת ערבות {i+1} — סכום (₪)<input type="number" value={g.amount||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,amount:e.target.value}:x)}))} style={S.inp} placeholder="0"/></label>
-                        <label style={S.lbl}>תאריך פקיעה<input type="date" value={g.endDate||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,endDate:e.target.value}:x)}))} style={S.inp}/></label>
-                        <label style={S.lbl}>התראה (ימים)<input type="number" min="1" value={g.alertDays||30} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,alertDays:+e.target.value}:x)}))} style={S.inp}/></label>
-                        <button onClick={()=>setUnitForm(p=>({...p,guarantees:p.guarantees.filter((_,j)=>j!==i)}))} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:14,alignSelf:"flex-end",paddingBottom:6}}>🗑</button>
+                      <div key={i} style={{background:"#0e0e20",borderRadius:6,padding:8,marginBottom:6}}>
+                        <div style={{color:"#a78bfa",fontSize:11,fontWeight:700,marginBottom:6}}>{i===0?"ערבות בנקאית":`הארכת ערבות ${i}`}</div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr auto",gap:6}}>
+                          <label style={S.lbl}>מספר ערבות<input type="text" value={g.number||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,number:e.target.value}:x)}))} style={S.inp} placeholder="12345"/></label>
+                          <label style={S.lbl}>סכום (₪)<input type="number" value={g.amount||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,amount:e.target.value}:x)}))} style={S.inp} placeholder="0"/></label>
+                          <label style={S.lbl}>תאריך פקיעה<input type="date" value={g.endDate||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,endDate:e.target.value}:x)}))} style={S.inp}/></label>
+                          <label style={S.lbl}>התראה (ימים)<input type="number" min="1" value={g.alertDays||30} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,alertDays:+e.target.value}:x)}))} style={S.inp}/></label>
+                          <button onClick={()=>setUnitForm(p=>({...p,guarantees:p.guarantees.filter((_,j)=>j!==i)}))} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:14,alignSelf:"flex-end",paddingBottom:6}}>🗑</button>
+                        </div>
                       </div>
                     ))}
-                    <button onClick={()=>setUnitForm(p=>({...p,guarantees:[...(p.guarantees||[]),{amount:"",endDate:"",alertDays:30}]}))} style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף הארכת ערבות</button>
+                    <div style={{display:"flex",gap:8}}>
+                      {!(unitForm.guarantees?.length>0)&&<button onClick={()=>setUnitForm(p=>({...p,guarantees:[{amount:"",endDate:"",alertDays:30}]}))} style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף ערבות בנקאית</button>}
+                      {(unitForm.guarantees?.length>0)&&<button onClick={()=>setUnitForm(p=>({...p,guarantees:[...(p.guarantees||[]),{amount:"",endDate:"",alertDays:30}]}))} style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף הארכת ערבות</button>}
+                    </div>
                   </div>
                   <label style={S.lbl}>💧 מספר מונה מים<input value={unitForm.waterMeterId} onChange={e=>setUnitForm(p=>({...p,waterMeterId:e.target.value}))} style={S.inp} placeholder="12345678"/></label>
                   <label style={S.lbl}>⚡ מספר מונה חשמל<input value={unitForm.electricMeterId} onChange={e=>setUnitForm(p=>({...p,electricMeterId:e.target.value}))} style={S.inp} placeholder="87654321"/></label>
@@ -2825,7 +2831,7 @@ function UnitsTab({data,save,readonly=false}){
                     </div>}
                     {u.contractEnd&&<div style={{fontSize:11,color:isExpiringSoon(u.contractEnd,u.contractAlertDays||60)?"#e85c4a":"#555",marginTop:4}}>📋 חוזה עד: {u.contractEnd}{isExpiringSoon(u.contractEnd,u.contractAlertDays||60)&&" ⚠️"}</div>}
                     {(u.renewals||[]).map((r,i)=>r.endDate&&<div key={i} style={{fontSize:11,color:isExpiringSoon(r.endDate,r.alertDays||60)?"#e85c4a":"#555",marginTop:2}}>📋 הארכה {i+1} עד: {r.endDate}{isExpiringSoon(r.endDate,r.alertDays||60)&&" ⚠️"}</div>)}
-                    {(u.guarantees||[]).map((g,i)=>g.endDate&&<div key={i} style={{fontSize:11,color:isExpiringSoon(g.endDate,g.alertDays||30)?"#e85c4a":"#555",marginTop:2}}>🏦 הארכת ערבות {i+1}{g.amount?` — ₪${g.amount}`:""} עד: {g.endDate}{isExpiringSoon(g.endDate,g.alertDays||30)&&" ⚠️"}</div>)}
+                    {(u.guarantees||[]).map((g,i)=>g.endDate&&<div key={i} style={{fontSize:11,color:isExpiringSoon(g.endDate,g.alertDays||30)?"#e85c4a":"#555",marginTop:2}}>🏦 {i===0?"ערבות":`הארכת ערבות ${i}`}{g.number?` מס' ${g.number}`:""}{g.amount?` — ₪${g.amount}`:""} עד: {g.endDate}{isExpiringSoon(g.endDate,g.alertDays||30)&&" ⚠️"}</div>)}
                   </div>
 
                   {/* Actions — hidden for viewers */}
