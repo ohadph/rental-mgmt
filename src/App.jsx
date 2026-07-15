@@ -2771,13 +2771,13 @@ function UnitsTab({data,save,readonly=false}){
                     {(unitForm.guarantees||[]).map((g,i)=>(
                       <div key={i} style={{background:"#0e0e20",borderRadius:6,padding:8,marginBottom:6}}>
                         <div style={{color:"#a78bfa",fontSize:11,fontWeight:700,marginBottom:6}}>{i===0?"ערבות בנקאית":`הארכת ערבות ${i}`}</div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr auto",gap:6}}>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
                           <label style={S.lbl}>מספר ערבות<input type="text" value={g.number||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,number:e.target.value}:x)}))} style={S.inp} placeholder="12345"/></label>
                           <label style={S.lbl}>סכום (₪)<input type="number" value={g.amount||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,amount:e.target.value}:x)}))} style={S.inp} placeholder="0"/></label>
                           <label style={S.lbl}>תאריך פקיעה<input type="date" value={g.endDate||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,endDate:e.target.value}:x)}))} style={S.inp}/></label>
-                          <label style={S.lbl}>התראה (ימים)<input type="number" min="1" value={g.alertDays||30} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,alertDays:+e.target.value}:x)}))} style={S.inp}/></label>
-                          <button onClick={()=>setUnitForm(p=>({...p,guarantees:p.guarantees.filter((_,j)=>j!==i)}))} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:14,alignSelf:"flex-end",paddingBottom:6}}>🗑</button>
+                          <label style={S.lbl}>התראה (ימים לפני)<input type="number" min="1" value={g.alertDays||30} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,alertDays:+e.target.value}:x)}))} style={S.inp}/></label>
                         </div>
+                        <button onClick={()=>setUnitForm(p=>({...p,guarantees:p.guarantees.filter((_,j)=>j!==i)}))} style={{...S.btn("#2a0a0a","#e85c4a"),fontSize:11}}>🗑 מחק</button>
                       </div>
                     ))}
                     <div style={{display:"flex",gap:8}}>
