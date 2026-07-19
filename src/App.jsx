@@ -1592,13 +1592,13 @@ function DocumentsTab({data, save}){
         {/* הארכות ערבות */}
         {(unit.guarantees||[]).length>0&&(
           <>
-            <div style={{fontSize:12,color:"#a78bfa",fontWeight:700,marginBottom:6,marginTop:10}}>🏦 הארכות ערבות בנקאית</div>
+            <div style={{fontSize:12,color:"#a78bfa",fontWeight:700,marginBottom:6,marginTop:10}}>🏦 ערבויות בנקאיות</div>
             {(unit.guarantees||[]).map((g,i)=>(
               <div key={i} style={{marginBottom:6}}>
                 <div style={{color:"#aaa",fontSize:11,marginBottom:3}}>
-                  הארכת ערבות {i+1}{g.amount&&` — ₪${g.amount}`}{g.endDate&&` — עד ${g.endDate}`}{g.endDate&&isExpiringSoon(g.endDate,g.alertDays||30)&&" ⚠️"}
+                  {i===0?"ערבות בנקאית":`הארכת ערבות ${i}`}{g.number?` מס' ${g.number}`:""}{g.amount&&` — ₪${g.amount}`}{g.endDate&&` — עד ${g.endDate}`}{g.endDate&&isExpiringSoon(g.endDate,g.alertDays||30)&&" ⚠️"}
                 </div>
-                <DocUploadBtn label={`הארכת ערבות ${i+1}`} file={g.file} bucket="guarantees"
+                <DocUploadBtn label={i===0?"ערבות בנקאית":`הארכת ערבות ${i}`} file={g.file} bucket="guarantees"
                   path={`unit_${selUnit}/guarantee_${i}`}
                   onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,guarantees:u.guarantees.map((x,j)=>j===i?{...x,file:f}:x)}:u)}))}
                   onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,guarantees:u.guarantees.map((x,j)=>j===i?{...x,file:null}:x)}:u)}))}
