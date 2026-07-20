@@ -1350,9 +1350,13 @@ function RemindersTab({data, save}){
       if(diff<=(r.alertDays||60)) autoAlerts.push({id:`auto_${unit.id}_renewal_${i}`,title:`הארכת חוזה ${i+1} — ${unit.name}`,date:r.endDate,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
     }
     for(const [i,g] of (unit.guarantees||[]).entries()){
-      if(!g.endDate) continue;
       const diff = Math.ceil((new Date(g.endDate)-new Date())/(1000*60*60*24));
-      if(diff<=(g.alertDays||30)) autoAlerts.push({id:`auto_${unit.id}_guarantee_${i}`,title:`${i===0?"ערבות בנקאית":`הארכת ערבות ${i}`}${g.number?` מס' ${g.number}`:""}${g.amount?` — ₪${g.amount}`:""} — ${unit.name}`,date:g.endDate,diff,color:diff<0?"#e85c4a":diff<=14?"#e85c4a":diff<=30?"#e8c547":"#888"});
+      const secType = g.type==="bank_check"?"המחאה בנקאית":g.type==="deposit"?"פיקדון":"ערבות בנקאית";
+      const secExpiry = g.type==="bank_check" ? (g.checkDate ? new Date(new Date(g.checkDate).setFullYear(new Date(g.checkDate).getFullYear()+7)).toLocaleDateString("en-CA") : null) : g.endDate;
+      const secAlert = g.alertDays||(g.type==="bank_check"?90:30);
+      if(!secExpiry) continue;
+      const secDiff = Math.ceil((new Date(secExpiry)-new Date())/(1000*60*60*24));
+      if(secDiff<=secAlert) autoAlerts.push({id:`auto_${unit.id}_guarantee_${i}`,title:`${secType}${g.amount?` — ₪${g.amount}`:""} — ${unit.name}`,date:secExpiry,diff:secDiff,color:secDiff<0?"#e85c4a":secDiff<=14?"#e85c4a":secDiff<=30?"#e8c547":"#888"});
     }
 
     // Fallback: old unit-level fields (only if no tenancies at all)
@@ -1623,6 +1627,31 @@ function DocumentsTab({data, save}){
                   color="#a78bfa"/>
               </div>
             ))}
+          </>
+        )}
+
+        {/* נספחי תיקונים */}
+        {(unit.amendments||[]).length>0&&(
+          <>
+            <div style={{fontSize:12,color:"#6bc5f8",fontWeight:700,marginBottom:6,marginTop:10}}>📎 נספחי תיקונים</div>
+            {[...( unit.renewals||[]).map((r,i)=>({type:"renewal",item:r,i,date:r.endDate||""})),
+               ...(unit.amendments||[]).map((a,i)=>({type:"amendment",item:a,i,date:a.date||""}))
+             ].sort((a,b)=>a.date.localeCompare(b.date))
+              .map((entry,idx)=>(
+                entry.type==="amendment"&&(
+                  <div key={idx} style={{marginBottom:6}}>
+                    <div style={{color:"#aaa",fontSize:11,marginBottom:3}}>
+                      📎 {entry.item.title||"נספח"}{entry.item.date&&` — ${entry.item.date}`}
+                    </div>
+                    <DocUploadBtn label={entry.item.title||"נספח תיקון"} file={entry.item.file} bucket="contracts"
+                      path={"unit_"+selUnit+"/amendment_"+entry.i}
+                      onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,amendments:u.amendments.map((x,j)=>j===entry.i?{...x,file:f}:x)}:u)}))}
+                      onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,amendments:u.amendments.map((x,j)=>j===entry.i?{...x,file:null}:x)}:u)}))}
+                      color="#6bc5f8"/>
+                  </div>
+                )
+              ))
+            }
           </>
         )}
 
@@ -2631,10 +2660,11 @@ function UnitsTab({data,save,readonly=false}){
       contractEnd:u.contractEnd||'', contractAlertDays:u.contractAlertDays||60,
       renewals: u.renewals || [],
       guarantees: u.guarantees || [],
+      amendments: u.amendments || [],
     });
   };
   const saveUnit=()=>{
-    save(d=>({...d,units:d.units.map(u=>u.id===editingUnit?{...u,...unitForm,rent:+unitForm.rent,persons:+unitForm.persons,arnonaAmount:+unitForm.arnonaAmount||0,contractAlertDays:+unitForm.contractAlertDays||60,renewals:unitForm.renewals||[],guarantees:unitForm.guarantees||[]}:u)}));
+    save(d=>({...d,units:d.units.map(u=>u.id===editingUnit?{...u,...unitForm,rent:+unitForm.rent,persons:+unitForm.persons,arnonaAmount:+unitForm.arnonaAmount||0,contractAlertDays:+unitForm.contractAlertDays||60,renewals:unitForm.renewals||[],guarantees:unitForm.guarantees||[],amendments:unitForm.amendments||[]}:u)}));
     setEditingUnit(null);
   };
 
@@ -2809,23 +2839,75 @@ function UnitsTab({data,save,readonly=false}){
                     <button onClick={()=>setUnitForm(p=>({...p,renewals:[...(p.renewals||[]),{endDate:"",alertDays:60}]}))} style={{...S.btn("#1a1a2e","#e8c547"),fontSize:11,marginBottom:12}}>+ הוסף הארכת חוזה</button>
 
                     {/* ערבויות */}
-                    <div style={{color:"#a78bfa",fontSize:12,fontWeight:700,marginBottom:6,marginTop:4}}>🏦 ערבויות בנקאיות</div>
-                    {(unitForm.guarantees||[]).map((g,i)=>(
-                      <div key={i} style={{background:"#0e0e20",borderRadius:6,padding:8,marginBottom:6}}>
-                        <div style={{color:"#a78bfa",fontSize:11,fontWeight:700,marginBottom:6}}>{i===0?"ערבות בנקאית":`הארכת ערבות ${i}`}</div>
-                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
-                          <label style={S.lbl}>מספר ערבות<input type="text" value={g.number||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,number:e.target.value}:x)}))} style={S.inp} placeholder="12345"/></label>
-                          <label style={S.lbl}>סכום (₪)<input type="number" value={g.amount||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,amount:e.target.value}:x)}))} style={S.inp} placeholder="0"/></label>
-                          <label style={S.lbl}>תאריך פקיעה<input type="date" value={g.endDate||""} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,endDate:e.target.value}:x)}))} style={S.inp}/></label>
-                          <label style={S.lbl}>התראה (ימים לפני)<input type="number" min="1" value={g.alertDays||30} onChange={e=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,alertDays:+e.target.value}:x)}))} style={S.inp}/></label>
+                    {/* ══ בטחונות ══ */}
+                    <div style={{color:"#a78bfa",fontSize:12,fontWeight:700,marginBottom:8,marginTop:4}}>🔐 בטחונות</div>
+                    {(unitForm.guarantees||[]).map((g,i)=>{
+                      const upd=(patch)=>setUnitForm(p=>({...p,guarantees:p.guarantees.map((x,j)=>j===i?{...x,...patch}:x)}));
+                      const del=()=>setUnitForm(p=>({...p,guarantees:p.guarantees.filter((_,j)=>j!==i)}));
+                      const typeLabels={bank_guarantee:"ערבות בנקאית",bank_check:"המחאה בנקאית",deposit:"פיקדון כספי"};
+                      return(
+                        <div key={i} style={{background:"#0e0e20",borderRadius:8,padding:12,marginBottom:8,border:"1px solid #2a2a4a"}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+                            <select value={g.type||"bank_guarantee"} onChange={e=>upd({type:e.target.value})} style={{...S.inp,fontWeight:700,color:"#a78bfa",fontSize:12}}>
+                              <option value="bank_guarantee">🏦 ערבות בנקאית</option>
+                              <option value="bank_check">📄 המחאה בנקאית</option>
+                              <option value="deposit">💰 פיקדון כספי</option>
+                            </select>
+                            <button onClick={del} style={{...S.btn("#2a0a0a","#e85c4a"),fontSize:11,marginRight:8}}>🗑 מחק</button>
+                          </div>
+
+                          {/* ערבות בנקאית */}
+                          {(!g.type||g.type==="bank_guarantee")&&(
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                              <label style={S.lbl}>מספר ערבות<input type="text" value={g.number||""} onChange={e=>upd({number:e.target.value})} style={S.inp} placeholder="12345"/></label>
+                              <label style={S.lbl}>סכום (₪)<input type="number" value={g.amount||""} onChange={e=>upd({amount:e.target.value})} style={S.inp}/></label>
+                              <label style={S.lbl}>תאריך פקיעה<input type="date" value={g.endDate||""} onChange={e=>upd({endDate:e.target.value})} style={S.inp}/></label>
+                              <label style={S.lbl}>התראה (ימים לפני)<input type="number" min="1" value={g.alertDays||30} onChange={e=>upd({alertDays:+e.target.value})} style={S.inp}/></label>
+                            </div>
+                          )}
+
+                          {/* המחאה בנקאית */}
+                          {g.type==="bank_check"&&(
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                              <label style={S.lbl}>מספר המחאה<input type="text" value={g.checkNumber||""} onChange={e=>upd({checkNumber:e.target.value})} style={S.inp} placeholder="123456"/></label>
+                              <label style={S.lbl}>בנק<input type="text" value={g.bank||""} onChange={e=>upd({bank:e.target.value})} style={S.inp} placeholder="בנק הפועלים"/></label>
+                              <label style={S.lbl}>סכום (₪)<input type="number" value={g.amount||""} onChange={e=>upd({amount:e.target.value})} style={S.inp}/></label>
+                              <label style={S.lbl}>תאריך משיכה<input type="date" value={g.checkDate||""} onChange={e=>upd({checkDate:e.target.value})} style={S.inp}/></label>
+                              <label style={S.lbl}>התראה (ימים לפני פקיעה)<input type="number" min="1" value={g.alertDays||90} onChange={e=>upd({alertDays:+e.target.value})} style={S.inp}/></label>
+                              <div style={{fontSize:10,color:"#555",paddingTop:16}}>המחאה בנקאית תקפה 7 שנים ממועד המשיכה</div>
+                            </div>
+                          )}
+
+                          {/* פיקדון כספי */}
+                          {g.type==="deposit"&&(
+                            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                              <label style={S.lbl}>סכום שהופקד (₪)<input type="number" value={g.amount||""} onChange={e=>upd({amount:e.target.value})} style={S.inp}/></label>
+                              <label style={S.lbl}>תאריך קבלה<input type="date" value={g.depositDate||""} onChange={e=>upd({depositDate:e.target.value})} style={S.inp}/></label>
+                              <label style={S.lbl}>סכום שהושב — כולל ריבית (₪)<input type="number" value={g.returnAmount||""} onChange={e=>upd({returnAmount:e.target.value})} style={S.inp} placeholder="0"/></label>
+                              <label style={S.lbl}>תאריך החזרה<input type="date" value={g.returnDate||""} onChange={e=>upd({returnDate:e.target.value})} style={S.inp}/></label>
+                              <label style={{...S.lbl,gridColumn:"1/-1",flexDirection:"row",alignItems:"center",gap:8}}>
+                                <input type="checkbox" checked={g.returned||false} onChange={e=>upd({returned:e.target.checked})} style={{width:16,height:16}}/>
+                                <span>הפיקדון הוחזר לשוכר</span>
+                              </label>
+                            </div>
+                          )}
                         </div>
-                        <button onClick={()=>setUnitForm(p=>({...p,guarantees:p.guarantees.filter((_,j)=>j!==i)}))} style={{...S.btn("#2a0a0a","#e85c4a"),fontSize:11}}>🗑 מחק</button>
+                      );
+                    })}
+                    <button onClick={()=>setUnitForm(p=>({...p,guarantees:[...(p.guarantees||[]),{type:"bank_guarantee",amount:"",endDate:"",alertDays:30}]}))} style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף בטחון</button>
+
+                    {/* ══ נספחי תיקונים ══ */}
+                    <div style={{color:"#6bc5f8",fontSize:12,fontWeight:700,marginBottom:8,marginTop:12}}>📎 נספחי תיקונים להסכם</div>
+                    {(unitForm.amendments||[]).map((a,i)=>(
+                      <div key={i} style={{background:"#0e0e20",borderRadius:8,padding:10,marginBottom:6,border:"1px solid #1a2a3a"}}>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr auto",gap:6}}>
+                          <label style={S.lbl}>תיאור הנספח<input type="text" value={a.title||""} onChange={e=>setUnitForm(p=>({...p,amendments:p.amendments.map((x,j)=>j===i?{...x,title:e.target.value}:x)}))} style={S.inp} placeholder="למשל: שינוי בטחון"/></label>
+                          <label style={S.lbl}>תאריך<input type="date" value={a.date||""} onChange={e=>setUnitForm(p=>({...p,amendments:p.amendments.map((x,j)=>j===i?{...x,date:e.target.value}:x)}))} style={S.inp}/></label>
+                          <button onClick={()=>setUnitForm(p=>({...p,amendments:p.amendments.filter((_,j)=>j!==i)}))} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:14,alignSelf:"flex-end",paddingBottom:6}}>🗑</button>
+                        </div>
                       </div>
                     ))}
-                    <div style={{display:"flex",gap:8}}>
-                      {!(unitForm.guarantees?.length>0)&&<button onClick={()=>setUnitForm(p=>({...p,guarantees:[{amount:"",endDate:"",alertDays:30}]}))} style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף ערבות בנקאית</button>}
-                      {(unitForm.guarantees?.length>0)&&<button onClick={()=>setUnitForm(p=>({...p,guarantees:[...(p.guarantees||[]),{amount:"",endDate:"",alertDays:30}]}))} style={{...S.btn("#1a1a2e","#a78bfa"),fontSize:11}}>+ הוסף הארכת ערבות</button>}
-                    </div>
+                    <button onClick={()=>setUnitForm(p=>({...p,amendments:[...(p.amendments||[]),{title:"",date:new Date().toLocaleDateString("en-CA")}]}))} style={{...S.btn("#1a1a2e","#6bc5f8"),fontSize:11}}>+ הוסף נספח תיקון</button>
                   </div>
                   <label style={S.lbl}>💧 מספר מונה מים<input value={unitForm.waterMeterId} onChange={e=>setUnitForm(p=>({...p,waterMeterId:e.target.value}))} style={S.inp} placeholder="12345678"/></label>
                   <label style={S.lbl}>⚡ מספר מונה חשמל<input value={unitForm.electricMeterId} onChange={e=>setUnitForm(p=>({...p,electricMeterId:e.target.value}))} style={S.inp} placeholder="87654321"/></label>
