@@ -2435,31 +2435,14 @@ function DocUploadBtn({label, file, bucket, path, onUploaded, onDelete, color="#
           {file?.url&&(
             <>
               <button onClick={async()=>{
-                // Refresh signed URL before opening (handles expired URLs)
-                let url = file.url;
-                if(file.path && !url.includes('token=')){
-                  const fresh = await getSignedUrl(bucket, file.path);
-                  if(fresh) url = fresh;
-                }
-                window.open(url, '_blank');
-              }} style={{...S.btn("#1a2a3a",color),fontSize:11,border:"none",cursor:"pointer",padding:"4px 10px",borderRadius:6}}>
-                📂 פתח
-              </button>
-              <button onClick={async()=>{
                 let url = file.url;
                 if(file.path){
                   const fresh = await getSignedUrl(bucket, file.path);
                   if(fresh) url = fresh;
                 }
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = file.name||"file";
-                a.target = '_blank';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-              }} style={{...S.btn("#1a2a1a","#4caf88"),fontSize:11,border:"none",cursor:"pointer",padding:"4px 10px",borderRadius:6}}>
-                ⬇️ הורד
+                window.open(url, '_blank');
+              }} style={{...S.btn("#1a2a3a",color),fontSize:11,border:"none",cursor:"pointer",padding:"4px 10px",borderRadius:6}}>
+                📂 פתח / הורד
               </button>
               <button onClick={onDelete} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:13}}>🗑</button>
             </>
