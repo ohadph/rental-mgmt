@@ -250,10 +250,21 @@ const getItemLabels = (periodKey) => {
 const uploadFile = async (bucket, path, file) => {
   const sb = window._supabaseClient;
   if(!sb) return null;
-  const { data, error } = await sb.storage.from(bucket).upload(path, file, { upsert: true });
+  const { data, error } = await sb.storage.from(bucket).upload(path, file, { 
+    upsert: true,
+    contentType: file.type || 'application/octet-stream'
+  });
   if(error){ console.error('Upload error:', error); return null; }
-  const { data: urlData } = sb.storage.from(bucket).getPublicUrl(path);
-  return urlData?.publicUrl || null;
+  // Use signed URL for private buckets (valid 10 years)
+  const { data: signedData } = await sb.storage.from(bucket).createSignedUrl(path, 60*60*24*365*10);
+  return signedData?.signedUrl || null;
+};
+
+const getSignedUrl = async (bucket, path) => {
+  const sb = window._supabaseClient;
+  if(!sb || !path) return null;
+  const { data } = await sb.storage.from(bucket).createSignedUrl(path, 60*60*24*365*10);
+  return data?.signedUrl || null;
 };
 
 const deleteFile = async (bucket, path) => {
@@ -2418,14 +2429,28 @@ function DocUploadBtn({label, file, bucket, path, onUploaded, onDelete, color="#
         <div style={{display:"flex",gap:6,alignItems:"center"}}>
           {file?.url&&(
             <>
-              <a href={file.url} target="_blank" rel="noreferrer"
-                style={{...S.btn("#1a2a3a",color),fontSize:11,textDecoration:"none",padding:"4px 10px",borderRadius:6}}>
+              <button onClick={async()=>{
+                // Refresh signed URL before opening (handles expired URLs)
+                let url = file.url;
+                if(file.path && !url.includes('token=')){
+                  const fresh = await getSignedUrl(bucket, file.path);
+                  if(fresh) url = fresh;
+                }
+                window.open(url, '_blank');
+              }} style={{...S.btn("#1a2a3a",color),fontSize:11,border:"none",cursor:"pointer",padding:"4px 10px",borderRadius:6}}>
                 📂 פתח
-              </a>
-              <a href={file.url} download={file.name||"file"}
-                style={{...S.btn("#1a2a1a","#4caf88"),fontSize:11,textDecoration:"none",padding:"4px 10px",borderRadius:6}}>
+              </button>
+              <button onClick={async()=>{
+                let url = file.url;
+                if(file.path && !url.includes('token=')){
+                  const fresh = await getSignedUrl(bucket, file.path);
+                  if(fresh) url = fresh;
+                }
+                const a = document.createElement('a');
+                a.href = url; a.download = file.name||"file"; a.click();
+              }} style={{...S.btn("#1a2a1a","#4caf88"),fontSize:11,border:"none",cursor:"pointer",padding:"4px 10px",borderRadius:6}}>
                 ⬇️ הורד
-              </a>
+              </button>
               <button onClick={onDelete} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:13}}>🗑</button>
             </>
           )}
