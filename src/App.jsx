@@ -2408,22 +2408,46 @@ const migrateToTenancies = (unit) => {
 function DocUploadBtn({label, file, bucket, path, onUploaded, onDelete, color="#6bc5f8", showExpiry=false}){
   const [uploading, setUploading] = React.useState(false);
   return(
-    <div style={{display:"flex",alignItems:"center",gap:6,flexWrap:"wrap",marginBottom:4}}>
-      <label style={{...S.btn(file?"#1a2a1a":"#0e1a2e",file?color:"#555"),fontSize:11,cursor:"pointer",padding:"4px 8px",borderRadius:6}}>
-        {uploading?"⏳":file?"✓ "+label:"📤 "+label}
-        <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{display:"none"}} disabled={uploading} onChange={async e=>{
-          const f=e.target.files[0]; if(!f) return;
-          setUploading(true);
-          const url=await uploadFile(bucket, path+"_"+Date.now()+"_"+f.name, f);
-          if(url) onUploaded({url, path:path+"_"+Date.now()+"_"+f.name, name:f.name, uploadDate:new Date().toLocaleDateString("en-CA"), expiryDate:file?.expiryDate||""});
-          setUploading(false);
-        }}/>
-      </label>
-      {file?.url&&<a href={file.url} target="_blank" rel="noreferrer" style={{color,fontSize:10}}>פתח</a>}
-      {file&&<button onClick={onDelete} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:11}}>🗑</button>}
-      {showExpiry&&file&&(
-        <input type="date" value={file.expiryDate||""} onChange={e=>onUploaded({...file,expiryDate:e.target.value})}
-          style={{...S.inp,fontSize:10,padding:"2px 6px",width:120}} placeholder="תאריך פקיעה"/>
+    <div style={{background:"#0e0e20",borderRadius:8,padding:10,marginBottom:6,border:`1px solid ${file?.url?"#2a4a2a":"#2a2a4a"}`}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:6}}>
+        <div style={{flex:1}}>
+          <div style={{color:file?.url?color:"#666",fontWeight:700,fontSize:12}}>{label}</div>
+          {file?.url&&<div style={{color:"#555",fontSize:10,marginTop:2}}>📎 {file.name||"קובץ"} · {file.uploadDate||""}</div>}
+          {!file?.url&&<div style={{color:"#444",fontSize:10,marginTop:2}}>לא הועלה</div>}
+        </div>
+        <div style={{display:"flex",gap:6,alignItems:"center"}}>
+          {file?.url&&(
+            <>
+              <a href={file.url} target="_blank" rel="noreferrer"
+                style={{...S.btn("#1a2a3a",color),fontSize:11,textDecoration:"none",padding:"4px 10px",borderRadius:6}}>
+                📂 פתח
+              </a>
+              <a href={file.url} download={file.name||"file"}
+                style={{...S.btn("#1a2a1a","#4caf88"),fontSize:11,textDecoration:"none",padding:"4px 10px",borderRadius:6}}>
+                ⬇️ הורד
+              </a>
+              <button onClick={onDelete} style={{background:"none",border:"none",color:"#e85c4a",cursor:"pointer",fontSize:13}}>🗑</button>
+            </>
+          )}
+          <label style={{...S.btn(file?.url?"#2a2a4a":"#1a3a1a",file?.url?"#888":"#4caf88"),fontSize:11,cursor:"pointer",padding:"4px 10px",borderRadius:6}}>
+            {uploading?"⏳ מעלה...":file?.url?"🔄 החלף":"📤 העלה"}
+            <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{display:"none"}} disabled={uploading} onChange={async e=>{
+              const f=e.target.files[0]; if(!f) return;
+              setUploading(true);
+              const url=await uploadFile(bucket, path+"_"+Date.now()+"_"+f.name, f);
+              if(url) onUploaded({url, path:path+"_"+Date.now()+"_"+f.name, name:f.name, uploadDate:new Date().toLocaleDateString("en-CA"), expiryDate:file?.expiryDate||""});
+              setUploading(false);
+            }}/>
+          </label>
+        </div>
+      </div>
+      {showExpiry&&file?.url&&(
+        <div style={{marginTop:8}}>
+          <label style={{...S.lbl,fontSize:11}}>תאריך פקיעה
+            <input type="date" value={file.expiryDate||""} onChange={e=>onUploaded({...file,expiryDate:e.target.value})}
+              style={{...S.inp,fontSize:11}}/>
+          </label>
+        </div>
       )}
     </div>
   );
