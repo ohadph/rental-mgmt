@@ -247,17 +247,24 @@ const getItemLabels = (periodKey) => {
 
 // ─── SUPABASE STORAGE HELPERS ─────────────────────────────────────────────────
 
+const sanitizeFileName = (name) => {
+  const ext = name.split('.').pop().toLowerCase();
+  const safe = name.replace(/[^\x00-\x7F]/g, '').replace(/[^a-zA-Z0-9._-]/g, '_').substring(0,50);
+  return (safe||'file') + '.' + ext;
+};
+
 const uploadFile = async (bucket, path, file) => {
   const sb = window._supabaseClient;
   if(!sb) return null;
-  const { data, error } = await sb.storage.from(bucket).upload(path, file, { 
+  const safeName = sanitizeFileName(file.name);
+  const safePath = path.replace(/[^\x00-\x7F]/g, '').replace(/[^a-zA-Z0-9/_.-]/g, '_') + '_' + safeName;
+  const { data, error } = await sb.storage.from(bucket).upload(safePath, file, { 
     upsert: true,
     contentType: file.type || 'application/octet-stream'
   });
   if(error){ console.error('Upload error:', error); return null; }
-  // Use signed URL for private buckets (valid 10 years)
-  const { data: signedData } = await sb.storage.from(bucket).createSignedUrl(path, 60*60*24*365*10);
-  return signedData?.signedUrl || null;
+  const { data: signedData } = await sb.storage.from(bucket).createSignedUrl(safePath, 60*60*24*365*10);
+  return signedData?.signedUrl ? {url: signedData.signedUrl, path: safePath} : null;
 };
 
 const getSignedUrl = async (bucket, path) => {
@@ -1646,9 +1653,8 @@ function DocumentsTab({data, save}){
                         📷 {label}{photo?"✓":""}
                         <input type="file" accept=".jpg,.jpeg,.png" style={{display:"none"}} onChange={async e=>{
                           const file=e.target.files[0]; if(!file) return;
-                          const path=`unit_${selUnit}/${p.key}_${type}_${Date.now()}_${file.name}`;
-                          const url=await uploadFile("bills-uploads",path,file);
-                          if(url) save(d=>({...d,bills:{...d.bills,[k]:{...d.bills[k],meterPhotos:{...(d.bills[k].meterPhotos||{}),[type]:{url,path,name:file.name,uploadDate:new Date().toLocaleDateString("en-CA")}}}}}));
+                          const result=await uploadFile("bills-uploads",`unit_${selUnit}/${p.key}_${type}`,file);
+                          if(result) save(d=>({...d,bills:{...d.bills,[k]:{...d.bills[k],meterPhotos:{...(d.bills[k].meterPhotos||{}),[type]:{url:result.url,path:result.path,name:file.name,uploadDate:new Date().toLocaleDateString("en-CA")}}}}}));
                         }}/>
                       </label>
                       {photo&&<a href={photo.url} target="_blank" rel="noreferrer" style={{color,fontSize:10}}>פתח</a>}
@@ -2162,9 +2168,8 @@ function BillsTab({data,save,readonly=false,unitFilter=null}){
                             📷 {label}{photo?"✓":""}
                             <input type="file" accept=".jpg,.jpeg,.png,.pdf" style={{display:"none"}} onChange={async e=>{
                               const file=e.target.files[0]; if(!file) return;
-                              const path=`unit_${unit.id}/${month}_${type}_${Date.now()}_${file.name}`;
-                              const url=await uploadFile("bills-uploads",path,file);
-                              if(url) save(d=>({...d,bills:{...d.bills,[k]:{...d.bills[k],meterPhotos:{...(d.bills[k].meterPhotos||{}),[type]:{url,path,name:file.name,uploadDate:new Date().toLocaleDateString("en-CA")}}}}}));
+                              const result=await uploadFile("bills-uploads",`unit_${unit.id}/${month}_${type}`,file);
+                              if(result) save(d=>({...d,bills:{...d.bills,[k]:{...d.bills[k],meterPhotos:{...(d.bills[k].meterPhotos||{}),[type]:{url:result.url,path:result.path,name:file.name,uploadDate:new Date().toLocaleDateString("en-CA")}}}}}));
                             }}/>
                           </label>
                           {photo&&<a href={photo.url} target="_blank" rel="noreferrer" style={{color:color,fontSize:10}}>פתח</a>}
@@ -2442,12 +2447,17 @@ function DocUploadBtn({label, file, bucket, path, onUploaded, onDelete, color="#
               </button>
               <button onClick={async()=>{
                 let url = file.url;
-                if(file.path && !url.includes('token=')){
+                if(file.path){
                   const fresh = await getSignedUrl(bucket, file.path);
                   if(fresh) url = fresh;
                 }
                 const a = document.createElement('a');
-                a.href = url; a.download = file.name||"file"; a.click();
+                a.href = url;
+                a.download = file.name||"file";
+                a.target = '_blank';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
               }} style={{...S.btn("#1a2a1a","#4caf88"),fontSize:11,border:"none",cursor:"pointer",padding:"4px 10px",borderRadius:6}}>
                 ⬇️ הורד
               </button>
@@ -2459,8 +2469,8 @@ function DocUploadBtn({label, file, bucket, path, onUploaded, onDelete, color="#
             <input type="file" accept=".pdf,.jpg,.jpeg,.png" style={{display:"none"}} disabled={uploading} onChange={async e=>{
               const f=e.target.files[0]; if(!f) return;
               setUploading(true);
-              const url=await uploadFile(bucket, path+"_"+Date.now()+"_"+f.name, f);
-              if(url) onUploaded({url, path:path+"_"+Date.now()+"_"+f.name, name:f.name, uploadDate:new Date().toLocaleDateString("en-CA"), expiryDate:file?.expiryDate||""});
+              const result=await uploadFile(bucket, path, f);
+              if(result) onUploaded({url:result.url, path:result.path, name:f.name, uploadDate:new Date().toLocaleDateString("en-CA"), expiryDate:file?.expiryDate||""});
               setUploading(false);
             }}/>
           </label>
