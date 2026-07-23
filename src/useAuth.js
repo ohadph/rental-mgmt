@@ -57,6 +57,20 @@ export function useAuth() {
     return () => subscription.unsubscribe()
   }, [])
 
+  // ── Log login attempt ────────────────────────────────────────────────────
+  const logLogin = async (email, success, method='password') => {
+    try {
+      const sb = getSupabase()
+      await sb.from('login_logs').insert({
+        email: email.trim().toLowerCase(),
+        user_agent: navigator.userAgent,
+        success,
+        method,
+        login_at: new Date().toISOString(),
+      })
+    } catch(e) { /* silent fail */ }
+  }
+
   // ── Fetch role from app_users ─────────────────────────────────────────────
   const fetchRole = async (email) => {
     if(IS_CLAUDE || !SUPABASE_URL) return
@@ -110,7 +124,12 @@ export function useAuth() {
     setError(null)
     const sb = getSupabase()
     const { error } = await sb.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
-    if(error){ setError('מייל או סיסמה שגויים.'); return false }
+    if(error){ 
+      setError('מייל או סיסמה שגויים.')
+      await logLogin(email, false, 'password')
+      return false 
+    }
+    await logLogin(email, true, 'password')
     return true
   }
 
@@ -122,6 +141,7 @@ export function useAuth() {
       options: { redirectTo: window.location.origin }
     })
     if(error){ setError('שגיאה בכניסה עם Google'); return false }
+    // Google login is logged via onAuthStateChange
     return true
   }
 
