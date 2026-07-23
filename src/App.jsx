@@ -3178,17 +3178,46 @@ function ExcelPanel({data, save}){
 
 function EmailSettingsTab({data, save}){
   const settings = data.emailSettings || {};
-  const [reminderEmails, setReminderEmails] = React.useState((settings.reminderRecipients||[]).join(", "));
-  const [reportEmails, setReportEmails]     = React.useState((settings.reportRecipients||[]).join(", "));
+  const appUsers = data.appUsers || []; // we'll load from Supabase via useEffect
+
+  // Load app_users from Supabase for user selection
+  const [users, setUsers] = React.useState([]);
+  React.useEffect(()=>{
+    const sb = window._supabaseClient;
+    if(!sb) return;
+    sb.from('app_users').select('email, role, display_name').then(({data})=>{
+      if(data) setUsers(data.filter(u=>u.role!=='pending'));
+    });
+  },[]);
+
+  const [reminderSelected, setReminderSelected] = React.useState(new Set(settings.reminderRecipients||[]));
+  const [reportSelected,   setReportSelected]   = React.useState(new Set(settings.reportRecipients||[]));
+  const [reminderExtra, setReminderExtra] = React.useState(
+    (settings.reminderRecipients||[]).filter(e=>!users.some(u=>u.email===e)).join(", ")
+  );
+  const [reportExtra, setReportExtra] = React.useState(
+    (settings.reportRecipients||[]).filter(e=>!users.some(u=>u.email===e)).join(", ")
+  );
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(null);
 
   const parseEmails = (str) => str.split(/[,\n]/).map(e=>e.trim()).filter(e=>e.includes("@"));
 
+  const toggleUser = (email, set, setFn) => {
+    const next = new Set(set);
+    next.has(email) ? next.delete(email) : next.add(email);
+    setFn(next);
+  };
+
+  const buildRecipients = (selected, extra) => [
+    ...selected,
+    ...parseEmails(extra).filter(e=>!selected.has(e))
+  ];
+
   const handleSave = () => {
     save(d=>({...d, emailSettings:{
-      reminderRecipients: parseEmails(reminderEmails),
-      reportRecipients:   parseEmails(reportEmails),
+      reminderRecipients: buildRecipients(reminderSelected, reminderExtra),
+      reportRecipients:   buildRecipients(reportSelected, reportExtra),
     }}));
     setSaved(true);
     setTimeout(()=>setSaved(false), 2000);
@@ -3204,22 +3233,41 @@ function EmailSettingsTab({data, save}){
     setTesting(null);
   };
 
+  const UserCheckList = ({selected, onToggle, color}) => (
+    <div style={{marginBottom:8}}>
+      {users.map(u=>(
+        <div key={u.email} onClick={()=>onToggle(u.email)}
+          style={{display:"flex",alignItems:"center",gap:8,padding:"6px 8px",borderRadius:6,cursor:"pointer",background:selected.has(u.email)?"#1a2a1a":"transparent",marginBottom:3}}>
+          <div style={{width:18,height:18,borderRadius:4,background:selected.has(u.email)?color:"transparent",border:`2px solid ${selected.has(u.email)?color:"#444"}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
+            {selected.has(u.email)&&<span style={{color:"#1a1a2e",fontSize:11,fontWeight:900}}>✓</span>}
+          </div>
+          <div>
+            <div style={{color:selected.has(u.email)?"#ddd":"#888",fontSize:12,fontWeight:600}}>{u.display_name||u.email}</div>
+            <div style={{color:"#555",fontSize:10,direction:"ltr"}}>{u.email}</div>
+          </div>
+        </div>
+      ))}
+      {users.length===0&&<div style={{color:"#555",fontSize:11}}>טוען משתמשים...</div>}
+    </div>
+  );
+
   return(
     <div>
       <Card style={{marginBottom:16}}>
         <div style={{fontWeight:800,color:"#e8c547",marginBottom:4,fontSize:15}}>📧 הגדרות מיילים</div>
-        <div style={{color:"#555",fontSize:12,marginBottom:20}}>הגדר לאיזה כתובות מייל ישלחו התראות ודוחות. הפרד בפסיק בין כתובות מרובות.</div>
+        <div style={{color:"#555",fontSize:12,marginBottom:20}}>המנהל תמיד מקבל. סמן משתמשים נוספים או הוסף כתובות ידנית.</div>
 
+        {/* Reminders */}
         <div style={{background:"#0e0e20",borderRadius:10,padding:14,marginBottom:14}}>
-          <div style={{color:"#e85c4a",fontWeight:700,fontSize:13,marginBottom:4}}>⚠️ התראות יומיות</div>
-          <div style={{color:"#555",fontSize:11,marginBottom:8}}>נשלחות כל יום בשעה 6:00</div>
-          <label style={S.lbl}>כתובות מייל (מופרדות בפסיק)
-            <textarea value={reminderEmails} onChange={e=>setReminderEmails(e.target.value)}
-              style={{...S.inp,height:60,resize:"vertical",direction:"ltr",fontSize:12}}
-              placeholder="email1@gmail.com, email2@gmail.com"/>
+          <div style={{color:"#e85c4a",fontWeight:700,fontSize:13,marginBottom:8}}>⚠️ התראות יומיות — שעה 6:00</div>
+          <div style={{color:"#888",fontSize:11,marginBottom:6}}>משתמשי המערכת:</div>
+          <UserCheckList selected={reminderSelected} onToggle={e=>toggleUser(e,reminderSelected,setReminderSelected)} color="#e85c4a"/>
+          <label style={{...S.lbl,marginTop:8}}>כתובות נוספות (מופרדות בפסיק)
+            <input type="text" value={reminderExtra} onChange={e=>setReminderExtra(e.target.value)}
+              style={{...S.inp,direction:"ltr",fontSize:12}} placeholder="email@example.com"/>
           </label>
-          <div style={{color:"#555",fontSize:11,marginTop:4}}>
-            נמענים: {parseEmails(reminderEmails).length>0 ? parseEmails(reminderEmails).join(", ") : "לא הוגדרו — ישלח רק למנהל"}
+          <div style={{color:"#555",fontSize:10,marginTop:4}}>
+            סה"כ נמענים: {buildRecipients(reminderSelected,reminderExtra).length} (+ מנהל)
           </div>
           <button onClick={()=>testSend("reminder")} disabled={testing==="reminder"}
             style={{...S.btn("#1a2a3a","#e85c4a"),fontSize:11,marginTop:8}}>
@@ -3227,16 +3275,17 @@ function EmailSettingsTab({data, save}){
           </button>
         </div>
 
+        {/* Reports */}
         <div style={{background:"#0e0e20",borderRadius:10,padding:14,marginBottom:14}}>
-          <div style={{color:"#6bc5f8",fontWeight:700,fontSize:13,marginBottom:4}}>📊 דוח שבועי</div>
-          <div style={{color:"#555",fontSize:11,marginBottom:8}}>נשלח כל יום ראשון בשעה 7:00</div>
-          <label style={S.lbl}>כתובות מייל (מופרדות בפסיק)
-            <textarea value={reportEmails} onChange={e=>setReportEmails(e.target.value)}
-              style={{...S.inp,height:60,resize:"vertical",direction:"ltr",fontSize:12}}
-              placeholder="email1@gmail.com, email2@gmail.com"/>
+          <div style={{color:"#6bc5f8",fontWeight:700,fontSize:13,marginBottom:8}}>📊 דוח שבועי — יום ראשון 7:00</div>
+          <div style={{color:"#888",fontSize:11,marginBottom:6}}>משתמשי המערכת:</div>
+          <UserCheckList selected={reportSelected} onToggle={e=>toggleUser(e,reportSelected,setReportSelected)} color="#6bc5f8"/>
+          <label style={{...S.lbl,marginTop:8}}>כתובות נוספות (מופרדות בפסיק)
+            <input type="text" value={reportExtra} onChange={e=>setReportExtra(e.target.value)}
+              style={{...S.inp,direction:"ltr",fontSize:12}} placeholder="email@example.com"/>
           </label>
-          <div style={{color:"#555",fontSize:11,marginTop:4}}>
-            נמענים: {parseEmails(reportEmails).length>0 ? parseEmails(reportEmails).join(", ") : "לא הוגדרו — ישלח רק למנהל"}
+          <div style={{color:"#555",fontSize:10,marginTop:4}}>
+            סה"כ נמענים: {buildRecipients(reportSelected,reportExtra).length} (+ מנהל)
           </div>
           <button onClick={()=>testSend("report")} disabled={testing==="report"}
             style={{...S.btn("#1a2a3a","#6bc5f8"),fontSize:11,marginTop:8}}>
