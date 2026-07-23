@@ -3186,7 +3186,7 @@ function EmailSettingsTab({data, save}){
     const sb = window._supabaseClient;
     if(!sb) return;
     sb.from('app_users').select('email, role, display_name').then(({data})=>{
-      if(data) setUsers(data.filter(u=>u.role!=='pending'));
+      if(data) setUsers(data.filter(u=>u.role!=='pending' && u.role!=='admin'));
     });
   },[]);
 
