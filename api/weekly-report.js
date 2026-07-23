@@ -26,7 +26,8 @@ export default async function handler(req, res) {
     if(!row?.payload) return res.json({error: 'No data'});
 
     const { units=[], bills={}, tariffs, reminders=[], emailSettings={} } = row.payload;
-    const recipients = emailSettings.reportRecipients?.length ? emailSettings.reportRecipients : [GMAIL_USER];
+    // Admin always receives report
+    const recipients = [...new Set([GMAIL_USER, ...(emailSettings.reportRecipients||[])])];
     const today = new Date();
     const todayStr = today.toLocaleDateString('en-CA');
 

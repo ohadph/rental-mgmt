@@ -30,11 +30,9 @@ export default async function handler(req, res) {
 
     if(!row?.payload) return res.json({sent: 0, message: 'No data found'});
 
-    // Get reminder recipients from settings (fallback to admin)
+    // Get reminder recipients — admin always included
     const emailSettings = row.payload.emailSettings || {};
-    const recipients = emailSettings.reminderRecipients?.length
-      ? emailSettings.reminderRecipients
-      : [ADMIN_EMAIL];
+    const recipients = [...new Set([ADMIN_EMAIL, ...(emailSettings.reminderRecipients||[])])];
 
     const appData = row.payload;
     const units   = appData.units || [];
