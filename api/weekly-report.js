@@ -25,7 +25,8 @@ export default async function handler(req, res) {
 
     if(!row?.payload) return res.json({error: 'No data'});
 
-    const { units=[], bills={}, tariffs, reminders=[] } = row.payload;
+    const { units=[], bills={}, tariffs, reminders=[], emailSettings={} } = row.payload;
+    const recipients = emailSettings.reportRecipients?.length ? emailSettings.reportRecipients : [GMAIL_USER];
     const today = new Date();
     const todayStr = today.toLocaleDateString('en-CA');
 
@@ -177,7 +178,7 @@ export default async function handler(req, res) {
 
     await transporter.sendMail({
       from: `"מערכת ניהול נכסים" <${GMAIL_USER}>`,
-      to: GMAIL_USER,
+      to: recipients.join(', '),
       subject: `🏢 דוח שבועי — ${totalIssues ? totalIssues+' פריטים לטיפול' : 'הכל תקין'} · ${today.toLocaleDateString('he-IL')}`,
       html,
     });

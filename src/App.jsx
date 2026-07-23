@@ -36,6 +36,7 @@ const DEFAULT_DATA = {
   ],
   buildingBills: {},   // { 'YYYY-MM': { periods:[{kwh,price,dateFrom,dateTo}], fixedCostTotal, fixedSplitMethod, date } }
   reminders: [],
+  emailSettings: { reminderRecipients: [], reportRecipients: [] },
   tariffs: {
     water: {
       name:"מים", unit:"מ״ק", tiered:true,
@@ -3421,6 +3422,7 @@ export default function App(){
       {id:"reminders",label:"תזכורות",           icon:"🔔"},
       {id:"docs",     label:"מסמכים",           icon:"📁"},
       {id:"excel",    label:"Excel",            icon:"📊"},
+      {id:"email-settings", label:"הגדרות מייל", icon:"📧"},
     ]:[]),
   ];
 
@@ -3473,6 +3475,7 @@ export default function App(){
         {tab==="excel"    &&!isUnitViewer(userRole)&&<ExcelPanel   data={data} save={save}/>}
         {tab==="docs"     &&!isUnitViewer(userRole)&&<DocumentsTab  data={data} save={save}/>}
         {tab==="reminders"&&!isUnitViewer(userRole)&&<RemindersTab  data={data} save={save}/>}
+        {tab==="email-settings"&&isAdmin(userRole)&&<EmailSettingsTab data={data} save={save}/>}
       </div>
     </div>
   );

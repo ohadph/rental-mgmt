@@ -10,7 +10,7 @@ const SUPABASE_KEY  = process.env.SUPABASE_SERVICE_KEY; // service role key for 
 const WORKSPACE_ID  = process.env.VITE_WORKSPACE_ID || 'rental-mgmt';
 const GMAIL_USER    = process.env.GMAIL_USER;
 const GMAIL_PASS    = process.env.GMAIL_APP_PASSWORD;
-const ADMIN_EMAIL   = process.env.GMAIL_USER; // send to self
+const ADMIN_EMAIL   = process.env.GMAIL_USER;
 
 export default async function handler(req, res) {
   // Security: only allow Vercel Cron or manual trigger with secret
@@ -29,6 +29,12 @@ export default async function handler(req, res) {
       .single();
 
     if(!row?.payload) return res.json({sent: 0, message: 'No data found'});
+
+    // Get reminder recipients from settings (fallback to admin)
+    const emailSettings = row.payload.emailSettings || {};
+    const recipients = emailSettings.reminderRecipients?.length
+      ? emailSettings.reminderRecipients
+      : [ADMIN_EMAIL];
 
     const appData = row.payload;
     const units   = appData.units || [];
@@ -134,7 +140,7 @@ export default async function handler(req, res) {
 
     await transporter.sendMail({
       from: `"מערכת ניהול נכסים" <${GMAIL_USER}>`,
-      to: ADMIN_EMAIL,
+      to: recipients.join(', '),
       subject: `🏢 תזכורות נכסים — ${alerts.length} התראות (${today.toLocaleDateString('he-IL')})`,
       html: htmlBody,
     });
