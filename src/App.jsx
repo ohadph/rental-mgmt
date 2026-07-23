@@ -1614,19 +1614,33 @@ function DocumentsTab({data, save}){
         {/* הארכות ערבות */}
         {(unit.guarantees||[]).length>0&&(
           <>
-            <div style={{fontSize:12,color:"#a78bfa",fontWeight:700,marginBottom:6,marginTop:10}}>🏦 ערבויות בנקאיות</div>
-            {(unit.guarantees||[]).map((g,i)=>(
-              <div key={i} style={{marginBottom:6}}>
-                <div style={{color:"#aaa",fontSize:11,marginBottom:3}}>
-                  {i===0?"ערבות בנקאית":`הארכת ערבות ${i}`}{g.number?` מס' ${g.number}`:""}{g.amount&&` — ₪${g.amount}`}{g.endDate&&` — עד ${g.endDate}`}{g.endDate&&isExpiringSoon(g.endDate,g.alertDays||30)&&" ⚠️"}
+            <div style={{fontSize:12,color:"#a78bfa",fontWeight:700,marginBottom:6,marginTop:10}}>🔐 בטחונות</div>
+            {(unit.guarantees||[]).map((g,i)=>{
+              const typeIcon = g.type==="bank_check"?"📄":g.type==="deposit"?"💰":"🏦";
+              const typeLabel = g.type==="bank_check"?"המחאה בנקאית":g.type==="deposit"?"פיקדון כספי":"ערבות בנקאית";
+              const expiry = g.type==="bank_check" ? (g.checkDate ? new Date(new Date(g.checkDate).setFullYear(new Date(g.checkDate).getFullYear()+7)).toLocaleDateString("en-CA") : null) : g.endDate;
+              const alertD = g.alertDays||(g.type==="bank_check"?90:30);
+              const details = [
+                g.amount&&`₪${g.amount}`,
+                g.number&&`מס' ${g.number}`,
+                g.checkNumber&&`המחאה ${g.checkNumber}`,
+                g.bank&&g.bank,
+                expiry&&`עד ${expiry}`,
+              ].filter(Boolean).join(" · ");
+              return(
+                <div key={i} style={{marginBottom:6}}>
+                  <div style={{color:"#aaa",fontSize:11,marginBottom:3}}>
+                    {typeIcon} {typeLabel}{details&&` — ${details}`}{expiry&&isExpiringSoon(expiry,alertD)&&" ⚠️"}
+                    {g.type==="deposit"&&g.returned&&<span style={{color:"#4caf88",marginRight:6}}> ✓ הוחזר</span>}
+                  </div>
+                  <DocUploadBtn label={typeLabel} file={g.file} bucket="guarantees"
+                    path={`unit_${selUnit}/guarantee_${i}`}
+                    onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,guarantees:u.guarantees.map((x,j)=>j===i?{...x,file:f}:x)}:u)}))}
+                    onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,guarantees:u.guarantees.map((x,j)=>j===i?{...x,file:null}:x)}:u)}))}
+                    color="#a78bfa"/>
                 </div>
-                <DocUploadBtn label={i===0?"ערבות בנקאית":`הארכת ערבות ${i}`} file={g.file} bucket="guarantees"
-                  path={`unit_${selUnit}/guarantee_${i}`}
-                  onUploaded={f=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,guarantees:u.guarantees.map((x,j)=>j===i?{...x,file:f}:x)}:u)}))}
-                  onDelete={()=>save(d=>({...d,units:d.units.map(u=>u.id===selUnit?{...u,guarantees:u.guarantees.map((x,j)=>j===i?{...x,file:null}:x)}:u)}))}
-                  color="#a78bfa"/>
-              </div>
-            ))}
+              );
+            })}
           </>
         )}
 
