@@ -3174,6 +3174,84 @@ function ExcelPanel({data, save}){
   );
 }
 
+// ─── EMAIL SETTINGS TAB ───────────────────────────────────────────────────────
+
+function EmailSettingsTab({data, save}){
+  const settings = data.emailSettings || {};
+  const [reminderEmails, setReminderEmails] = React.useState((settings.reminderRecipients||[]).join(", "));
+  const [reportEmails, setReportEmails]     = React.useState((settings.reportRecipients||[]).join(", "));
+  const [saved, setSaved] = useState(false);
+  const [testing, setTesting] = useState(null);
+
+  const parseEmails = (str) => str.split(/[,\n]/).map(e=>e.trim()).filter(e=>e.includes("@"));
+
+  const handleSave = () => {
+    save(d=>({...d, emailSettings:{
+      reminderRecipients: parseEmails(reminderEmails),
+      reportRecipients:   parseEmails(reportEmails),
+    }}));
+    setSaved(true);
+    setTimeout(()=>setSaved(false), 2000);
+  };
+
+  const testSend = async (type) => {
+    setTesting(type);
+    try {
+      const res = await fetch(`/api/${type==="reminder"?"send-reminders":"weekly-report"}`);
+      const d = await res.json();
+      alert(d.sent===1||d.sent===true ? "✅ נשלח בהצלחה!" : `📭 ${d.message||"לא היה מה לשלוח"}`);
+    } catch(e) { alert("❌ שגיאה בשליחה"); }
+    setTesting(null);
+  };
+
+  return(
+    <div>
+      <Card style={{marginBottom:16}}>
+        <div style={{fontWeight:800,color:"#e8c547",marginBottom:4,fontSize:15}}>📧 הגדרות מיילים</div>
+        <div style={{color:"#555",fontSize:12,marginBottom:20}}>הגדר לאיזה כתובות מייל ישלחו התראות ודוחות. הפרד בפסיק בין כתובות מרובות.</div>
+
+        <div style={{background:"#0e0e20",borderRadius:10,padding:14,marginBottom:14}}>
+          <div style={{color:"#e85c4a",fontWeight:700,fontSize:13,marginBottom:4}}>⚠️ התראות יומיות</div>
+          <div style={{color:"#555",fontSize:11,marginBottom:8}}>נשלחות כל יום בשעה 6:00</div>
+          <label style={S.lbl}>כתובות מייל (מופרדות בפסיק)
+            <textarea value={reminderEmails} onChange={e=>setReminderEmails(e.target.value)}
+              style={{...S.inp,height:60,resize:"vertical",direction:"ltr",fontSize:12}}
+              placeholder="email1@gmail.com, email2@gmail.com"/>
+          </label>
+          <div style={{color:"#555",fontSize:11,marginTop:4}}>
+            נמענים: {parseEmails(reminderEmails).length>0 ? parseEmails(reminderEmails).join(", ") : "לא הוגדרו — ישלח רק למנהל"}
+          </div>
+          <button onClick={()=>testSend("reminder")} disabled={testing==="reminder"}
+            style={{...S.btn("#1a2a3a","#e85c4a"),fontSize:11,marginTop:8}}>
+            {testing==="reminder"?"שולח...":"📤 שלח התראה לבדיקה"}
+          </button>
+        </div>
+
+        <div style={{background:"#0e0e20",borderRadius:10,padding:14,marginBottom:14}}>
+          <div style={{color:"#6bc5f8",fontWeight:700,fontSize:13,marginBottom:4}}>📊 דוח שבועי</div>
+          <div style={{color:"#555",fontSize:11,marginBottom:8}}>נשלח כל יום ראשון בשעה 7:00</div>
+          <label style={S.lbl}>כתובות מייל (מופרדות בפסיק)
+            <textarea value={reportEmails} onChange={e=>setReportEmails(e.target.value)}
+              style={{...S.inp,height:60,resize:"vertical",direction:"ltr",fontSize:12}}
+              placeholder="email1@gmail.com, email2@gmail.com"/>
+          </label>
+          <div style={{color:"#555",fontSize:11,marginTop:4}}>
+            נמענים: {parseEmails(reportEmails).length>0 ? parseEmails(reportEmails).join(", ") : "לא הוגדרו — ישלח רק למנהל"}
+          </div>
+          <button onClick={()=>testSend("report")} disabled={testing==="report"}
+            style={{...S.btn("#1a2a3a","#6bc5f8"),fontSize:11,marginTop:8}}>
+            {testing==="report"?"שולח...":"📤 שלח דוח לבדיקה"}
+          </button>
+        </div>
+
+        <button onClick={handleSave} style={{...S.btn("#e8c547","#1a1a2e"),width:"100%"}}>
+          {saved ? "✅ נשמר!" : "💾 שמור הגדרות"}
+        </button>
+      </Card>
+    </div>
+  );
+}
+
 // ─── REPORTS TAB ─────────────────────────────────────────────────────────────
 
 function ReportsTab({data, unitFilter=null}){
